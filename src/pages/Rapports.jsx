@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  FileBarChart, Building2, TrendingDown, DollarSign, 
-  ArrowRightLeft, AlertCircle, CheckCircle2, Info, Loader2, RefreshCw, Eye, FileText, Printer, Download, Calendar 
+  FileBarChart, Building2, TrendingDown, TrendingUp, DollarSign, 
+  ArrowRightLeft, AlertCircle, CheckCircle2, Info, Loader2, RefreshCw, Eye, FileText, Printer, Download, Calendar,
+  Trash2, RotateCcw, ChevronDown
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -11,6 +12,63 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { supabase } from '@/lib/supabase';
+
+const MultiSelectDropdown = ({ options, selected, onChange, placeholder, className = "" }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  return (
+    <div className={`relative ${className}`}>
+      <div 
+        className="border bg-white rounded-md px-3 py-2 h-10 cursor-pointer flex justify-between items-center text-sm"
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <span className="truncate">
+          {selected.length === 0 
+            ? placeholder 
+            : selected.length === options.length 
+              ? 'Toutes les sélections'
+              : `${selected.length} sélection(s)`}
+        </span>
+        <ChevronDown size={14} className="ml-2 text-muted-foreground shrink-0" />
+      </div>
+      {isOpen && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setIsOpen(false)} />
+          <div className="absolute top-full left-0 mt-1 w-full bg-white border shadow-xl rounded-md z-50 max-h-60 overflow-y-auto">
+            {options.length > 0 && (
+              <div 
+                className="p-2 border-b hover:bg-slate-50 cursor-pointer text-sm font-bold flex items-center gap-2"
+                onClick={() => {
+                  if (selected.length === options.length) onChange([]);
+                  else onChange(options.map(o => o.value));
+                }}
+              >
+                <input 
+                  type="checkbox" 
+                  checked={selected.length === options.length} 
+                  readOnly
+                />
+                Tout sélectionner
+              </div>
+            )}
+            {options.map(opt => (
+              <label key={opt.value} className="flex items-center gap-2 p-2 hover:bg-slate-50 cursor-pointer text-sm">
+                <input 
+                  type="checkbox" 
+                  checked={selected.includes(opt.value)}
+                  onChange={(e) => {
+                    if (e.target.checked) onChange([...selected, opt.value]);
+                    else onChange(selected.filter(v => v !== opt.value));
+                  }}
+                />
+                <span className="truncate">{opt.label}</span>
+              </label>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
 
 const Rapports = () => {
   const [activeTab, setActiveTab] = useState('fournisseurs'); // 'fournisseurs'
@@ -24,29 +82,76 @@ const Rapports = () => {
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
 
-  // Sub-Envelope Detail Modal State
-  const [selectedSubEnvDetail, setSelectedSubEnvDetail] = useState(null);
+  // Sub-Envelope Detail Modal & Exclusions State
+  const [selectedSubEnvId, setSelectedSubEnvId] = useState(null);
   const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
+  const [excludedAuditVenteIds, setExcludedAuditVenteIds] = useState([]);
+
+  // Depenses Filter States
+  const [depensesEnvId, setDepensesEnvId] = useState('');
+  const [depensesSubEnvId, setDepensesSubEnvId] = useState('');
+  const [depensesGroupeIds, setDepensesGroupeIds] = useState([]);
+
+  // Incomes Filter States
+  const [incomesSources, setIncomesSources] = useState(['ventes', 'omra']); 
+  const [incomesServiceIds, setIncomesServiceIds] = useState([]);
+  const [incomesGroupIds, setIncomesGroupIds] = useState([]);
 
   // Raw fetched data
   const [ventes, setVentes] = useState([]);
   const [enveloppes, setEnveloppes] = useState([]);
   const [sousEnveloppes, setSousEnveloppes] = useState([]);
   const [outcomes, setOutcomes] = useState([]);
+  const [omraGroupes, setOmraGroupes] = useState([]);
+  const [omraPaiements, setOmraPaiements] = useState([]);
+
+  // Pagination states for Tab 2 & 3
+  const [currentPageDepenses, setCurrentPageDepenses] = useState(1);
+  const [currentPageIncomes, setCurrentPageIncomes] = useState(1);
+  const ITEMS_PER_PAGE = 50;
 
   useEffect(() => {
-    fetchInitialData();
+    fetchMetadata();
   }, []);
 
-  const fetchInitialData = async () => {
-    setLoading(true);
-    const [fRes, sRes, vRes, eRes, subRes, oRes] = await Promise.all([
+  useEffect(() => {
+    fetchTransactions();
+    // Reset pagination when period changes
+    setCurrentPageDepenses(1); 
+    setCurrentPageIncomes(1);
+  }, [periodType, customStartDate, customEndDate]);
+
+  const getSupabaseDateRange = () => {
+    const now = new Date();
+    let start, end;
+    if (periodType === 'today') {
+      start = new Date(now.setHours(0,0,0,0)).toISOString();
+      end = new Date(now.setHours(23,59,59,999)).toISOString();
+    } else if (periodType === 'this_month') {
+      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+    } else if (periodType === 'last_month') {
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+      end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999).toISOString();
+    } else if (periodType === 'this_year') {
+      start = new Date(now.getFullYear(), 0, 1).toISOString();
+      end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999).toISOString();
+    } else if (periodType === 'custom') {
+      start = customStartDate ? new Date(customStartDate).toISOString() : new Date('2000-01-01').toISOString();
+      let e = customEndDate ? new Date(customEndDate) : now;
+      e.setHours(23, 59, 59, 999);
+      end = e.toISOString();
+    }
+    return { start, end };
+  };
+
+  const fetchMetadata = async () => {
+    const [fRes, sRes, eRes, subRes, ogRes] = await Promise.all([
       supabase.from('fournisseurs').select('*').order('nom'),
       supabase.from('services').select('*').order('nom'),
-      supabase.from('ventes').select('*'),
       supabase.from('outcomes_enveloppes').select('*'),
       supabase.from('outcomes_sous_enveloppes').select('*'),
-      supabase.from('outcomes').select('*')
+      supabase.from('omra_groupes').select('*')
     ]);
 
     if (fRes.data) {
@@ -56,12 +161,38 @@ const Rapports = () => {
       }
     }
     if (sRes.data) setServices(sRes.data);
-    if (vRes.data) setVentes(vRes.data);
     if (eRes.data) setEnveloppes(eRes.data);
     if (subRes.data) setSousEnveloppes(subRes.data);
-    if (oRes.data) setOutcomes(oRes.data);
+    if (ogRes.data) setOmraGroupes(ogRes.data);
+  };
 
+  const fetchTransactions = async () => {
+    setLoading(true);
+    let vQuery = supabase.from('ventes').select('*');
+    let oQuery = supabase.from('outcomes').select('*');
+    let opQuery = supabase.from('omra_paiements').select('*');
+    
+    if (periodType !== 'all') {
+      const range = getSupabaseDateRange();
+      if (range.start && range.end) {
+        vQuery = vQuery.gte('created_at', range.start).lte('created_at', range.end);
+        oQuery = oQuery.gte('created_at', range.start).lte('created_at', range.end);
+        opQuery = opQuery.gte('created_at', range.start).lte('created_at', range.end);
+      }
+    }
+
+    const [vRes, oRes, opRes] = await Promise.all([vQuery, oQuery, opQuery]);
+    
+    if (vRes.data) setVentes(vRes.data);
+    if (oRes.data) setOutcomes(oRes.data);
+    if (opRes.data) setOmraPaiements(opRes.data);
+    
     setLoading(false);
+  };
+
+  const fetchInitialData = () => {
+    fetchMetadata();
+    fetchTransactions();
   };
 
   // Selected Fournisseur Object
@@ -133,10 +264,11 @@ const Rapports = () => {
       };
     }
 
-    // 1. Filter sales for selected supplier & period
+    // 1. Filter sales for selected supplier & period (excluding manual audit exclusions)
     const supplierVentes = ventes.filter(v => 
       v.fournisseur_id === selectedFournisseurId && 
-      isDateInPeriod(v.date_vente || v.created_at)
+      isDateInPeriod(v.date_vente || v.created_at) &&
+      !excludedAuditVenteIds.includes(v.id)
     );
     const totalVentesTarif = supplierVentes.reduce((sum, v) => {
       // Tarif fournisseur is base rate or (total - commission)
@@ -281,10 +413,15 @@ const Rapports = () => {
   };
 
   const reportData = calculateSupplierReport();
+  const selectedSubEnvDetail = reportData.subEnvBreakdown.find(se => se.id === selectedSubEnvId) || null;
 
   const openSubEnvDetail = (se) => {
-    setSelectedSubEnvDetail(se);
+    setSelectedSubEnvId(se.id);
     setIsDetailModalOpen(true);
+  };
+
+  const handleExcludeVenteFromAudit = (venteId) => {
+    setExcludedAuditVenteIds(prev => [...prev, venteId]);
   };
 
   const exportPDF = () => {
@@ -476,9 +613,639 @@ const Rapports = () => {
         >
           <Building2 size={16} /> Rapport Fournisseurs (Par Sous-Enveloppe)
         </button>
+        <button
+          onClick={() => setActiveTab('depenses')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+            activeTab === 'depenses'
+              ? 'text-primary border-primary bg-primary/5'
+              : 'text-muted-foreground border-transparent hover:text-foreground'
+          }`}
+        >
+          <DollarSign size={16} /> Rapport de Dépenses
+        </button>
+        <button
+          onClick={() => setActiveTab('incomes')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-semibold border-b-2 transition-colors ${
+            activeTab === 'incomes'
+              ? 'text-primary border-primary bg-primary/5'
+              : 'text-muted-foreground border-transparent hover:text-foreground'
+          }`}
+        >
+          <TrendingUp size={16} /> Rapport des Incomes
+        </button>
       </div>
 
+      {/* --- VOLET RAPPORT DÉPENSES --- */}
+      {activeTab === 'depenses' && (() => {
+        const selectedDepenseEnv = enveloppes.find(e => e.id === depensesEnvId);
+        const isDepenseEnvOmra = selectedDepenseEnv?.type_enveloppe === 'omra' || selectedDepenseEnv?.nom?.toLowerCase() === 'omra';
+
+        let filtered = outcomes.filter(o => isDateInPeriod(o.date_paiement || o.created_at));
+        if (depensesEnvId) {
+          filtered = filtered.filter(o => o.enveloppe_id === depensesEnvId);
+        }
+        if (depensesSubEnvId) {
+          filtered = filtered.filter(o => o.sous_enveloppe_id === depensesSubEnvId);
+        }
+        if (isDepenseEnvOmra && depensesGroupeIds.length > 0) {
+          filtered = filtered.filter(o => o.groupe_ids && o.groupe_ids.some(gid => depensesGroupeIds.includes(gid)));
+        }
+        const totalDZD = filtered.reduce((sum, o) => sum + (Number(o.montant_dzd) || Number(o.montant) || 0), 0);
+        
+        // Client-side pagination
+        const totalItems = filtered.length;
+        const totalPages = Math.ceil(totalItems / ITEMS_PER_PAGE);
+        const paginatedOutcomes = filtered.slice((currentPageDepenses - 1) * ITEMS_PER_PAGE, currentPageDepenses * ITEMS_PER_PAGE);
+
+        const exportDepensesPDF = () => {
+          const exportDate = new Date().toLocaleString('fr-FR');
+          const rows = filtered.map(o => {
+            const env = enveloppes.find(e => e.id === o.enveloppe_id);
+            const subEnv = sousEnveloppes.find(se => se.id === o.sous_enveloppe_id);
+            return `
+              <tr>
+                <td>${new Date(o.date_paiement).toLocaleDateString('fr-FR')}</td>
+                <td><b>${o.description || 'Dépense'}</b></td>
+                <td>${env?.nom || '—'}</td>
+                <td>${subEnv?.nom || '—'}</td>
+                <td style="text-align: right; font-weight: bold; color: #7e22ce;">${Number(o.montant_dzd).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</td>
+              </tr>
+            `;
+          }).join('');
+
+          const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Rapport de Dépenses</title>
+                <style>
+                  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 12px; color: #1e293b; margin: 30px; line-height: 1.5; }
+                  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #9333ea; padding-bottom: 12px; margin-bottom: 20px; }
+                  .title { font-size: 20px; font-weight: 800; color: #4c1d95; }
+                  .meta { font-size: 11px; color: #475569; text-align: right; }
+                  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }
+                  th { background: #f1f5f9; text-align: left; padding: 8px 10px; font-size: 10px; text-transform: uppercase; color: #475569; border: 1px solid #cbd5e1; font-weight: 700; }
+                  td { padding: 7px 10px; border: 1px solid #e2e8f0; }
+                  tr:nth-child(even) { background-color: #f8fafc; }
+                  .total-box { margin-top: 20px; text-align: right; font-size: 14px; font-weight: bold; }
+                  .total-val { font-size: 18px; color: #7e22ce; }
+                  @media print { body { margin: 15px; } }
+                </style>
+              </head>
+              <body>
+                <div class="header">
+                  <div>
+                    <div class="title">📋 RAPPORT DE DÉPENSES</div>
+                  </div>
+                  <div class="meta">
+                    <div><b>Période d'analyse :</b> ${getPeriodLabel()}</div>
+                    <div><b>Émis le :</b> ${exportDate}</div>
+                  </div>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Description</th>
+                      <th>Enveloppe</th>
+                      <th>Sous-Enveloppe</th>
+                      <th style="text-align: right;">Montant (DZD)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows || '<tr><td colSpan="5" style="text-align:center;">Aucune dépense</td></tr>'}
+                  </tbody>
+                </table>
+                <div class="total-box">
+                  Total des Dépenses : <span class="total-val">${totalDZD.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</span>
+                </div>
+                <script>window.onload = function() { window.print(); };</script>
+              </body>
+            </html>
+          `;
+          const printWindow = window.open('', '', 'height=800,width=1000');
+          printWindow.document.write(htmlContent);
+          printWindow.document.close();
+        };
+
+        return (
+          <div className="space-y-6">
+            <Card className="border-2 border-primary/20 bg-primary/5">
+              <CardContent className="p-4 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  {/* Filtres Enveloppes */}
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center text-purple-700 font-bold shrink-0">
+                        <FileText size={20} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-foreground block">Enveloppe :</label>
+                        <Select
+                          value={depensesEnvId}
+                          onChange={e => {
+                            setDepensesEnvId(e.target.value);
+                            setDepensesSubEnvId(''); // reset sub-env on change
+                            setDepensesGroupeIds([]); // reset group selection
+                          }}
+                          className="bg-white font-semibold mt-1 w-full sm:w-48"
+                        >
+                          <option value="">-- Toutes --</option>
+                          {enveloppes.map(env => (
+                            <option key={env.id} value={env.id}>{env.nom}</option>
+                          ))}
+                        </Select>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-3">
+                      <div>
+                        <label className="text-xs font-bold text-foreground block">Sous-Enveloppe :</label>
+                        <Select
+                          value={depensesSubEnvId}
+                          onChange={e => setDepensesSubEnvId(e.target.value)}
+                          className="bg-white font-semibold mt-1 w-full sm:w-48"
+                          disabled={!depensesEnvId}
+                        >
+                          <option value="">-- Toutes --</option>
+                          {sousEnveloppes
+                            .filter(se => se.enveloppe_id === depensesEnvId)
+                            .map(se => (
+                              <option key={se.id} value={se.id}>{se.nom}</option>
+                            ))}
+                        </Select>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Sélecteur de Période (Réutilisé) */}
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center text-blue-700 font-bold shrink-0">
+                      <Calendar size={20} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-foreground block">Période d'Analyse :</label>
+                      <Select
+                        value={periodType}
+                        onChange={e => setPeriodType(e.target.value)}
+                        className="bg-white font-semibold mt-1 w-full sm:w-56"
+                      >
+                        <option value="all">📅 Toutes les dates</option>
+                        <option value="today">📅 Aujourd'hui</option>
+                        <option value="this_month">📅 Ce mois-ci</option>
+                        <option value="last_month">📅 Le mois dernier</option>
+                        <option value="this_year">📅 Cette année</option>
+                        <option value="custom">📅 Personnalisée</option>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+
+                {isDepenseEnvOmra && (
+                  <div className="pt-3 border-t border-primary/10 mt-2">
+                    <label className="text-xs font-bold text-foreground block mb-2">Filtrer par Groupes Omra :</label>
+                    <div className="flex flex-wrap gap-2">
+                      {omraGroupes.map(g => {
+                        const isSelected = depensesGroupeIds.includes(g.id);
+                        return (
+                          <button
+                            key={g.id}
+                            type="button"
+                            onClick={() => {
+                              setDepensesGroupeIds(prev => 
+                                prev.includes(g.id) ? prev.filter(id => id !== g.id) : [...prev, g.id]
+                              );
+                            }}
+                            className={`text-xs font-semibold px-3 py-1.5 rounded-lg border transition-colors ${
+                              isSelected ? 'bg-purple-600 text-white border-purple-600' : 'bg-white text-gray-700 border-gray-200 hover:bg-purple-50'
+                            }`}
+                          >
+                            {g.nom}
+                          </button>
+                        );
+                      })}
+                      {omraGroupes.length === 0 && <span className="text-xs text-muted-foreground italic">Aucun groupe disponible</span>}
+                    </div>
+                  </div>
+                )}
+
+                {periodType === 'custom' && (
+                  <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-primary/10 bg-white/60 p-3 rounded-lg">
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Calendar size={14} className="text-primary" /> Plage personnalisée :
+                    </span>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-semibold text-muted-foreground">Du:</span>
+                      <Input type="date" value={customStartDate} onChange={e => setCustomStartDate(e.target.value)} className="h-8 text-xs bg-white w-36" />
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-semibold text-muted-foreground">Au:</span>
+                      <Input type="date" value={customEndDate} onChange={e => setCustomEndDate(e.target.value)} className="h-8 text-xs bg-white w-36" />
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card className="shadow-sm border-l-4 border-l-purple-500">
+              <CardHeader className="py-4 px-5">
+                <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total des Dépenses (Filtrées)</span>
+                <div className="text-3xl font-extrabold text-purple-700 mt-1">
+                  {totalDZD.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} <span className="text-sm text-muted-foreground">DZD</span>
+                </div>
+              </CardHeader>
+            </Card>
+
+            <Card className="shadow-md overflow-hidden">
+              <CardHeader className="bg-muted/30 py-4 border-b flex flex-row items-center justify-between">
+                <CardTitle className="text-base font-bold flex items-center gap-2">
+                  <FileText size={18} /> Détails des Dépenses ({filtered.length})
+                </CardTitle>
+                <Button onClick={exportDepensesPDF} size="sm" variant="outline" className="h-8 gap-2 border-purple-200 text-purple-700 hover:bg-purple-50">
+                  <Printer size={14} /> Exporter PDF
+                </Button>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-muted/50 text-muted-foreground text-[11px] uppercase font-bold border-b">
+                      <tr>
+                        <th className="px-5 py-3">Date</th>
+                        <th className="px-5 py-3">Description</th>
+                        <th className="px-5 py-3">Enveloppe</th>
+                        <th className="px-5 py-3">Sous-Enveloppe</th>
+                        <th className="px-5 py-3 text-right">Montant (DZD)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {paginatedOutcomes.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-5 py-8 text-center text-muted-foreground italic">Aucune dépense trouvée.</td>
+                        </tr>
+                      ) : (
+                        paginatedOutcomes.map(o => {
+                          const env = enveloppes.find(e => e.id === o.enveloppe_id);
+                          const subEnv = sousEnveloppes.find(se => se.id === o.sous_enveloppe_id);
+                          return (
+                            <tr key={o.id} className="hover:bg-muted/20">
+                              <td className="px-5 py-3">{new Date(o.date_paiement).toLocaleDateString('fr-FR')}</td>
+                              <td className="px-5 py-3 font-medium">{o.description || '-'}</td>
+                              <td className="px-5 py-3 text-muted-foreground text-xs">{env?.nom || '-'}</td>
+                              <td className="px-5 py-3 text-muted-foreground text-xs">{subEnv?.nom || '-'}</td>
+                              <td className="px-5 py-3 text-right font-bold text-slate-800">
+                                {(Number(o.montant_dzd) || Number(o.montant)).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })}
+                              </td>
+                            </tr>
+                          );
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {totalPages > 1 && (
+                  <div className="p-4 border-t flex justify-center gap-2">
+                    {Array.from({ length: totalPages }).map((_, i) => (
+                      <Button key={i} variant={currentPageDepenses === i + 1 ? 'default' : 'outline'} size="sm" onClick={() => setCurrentPageDepenses(i + 1)}>
+                        {i + 1}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        );
+      })()}
+
+      {/* --- VOLET RAPPORT REVENUS (INCOMES) --- */}
+      {activeTab === 'incomes' && (() => {
+        let filteredVentes = [];
+        let filteredOmra = [];
+
+        if (incomesSources.includes('ventes')) {
+          filteredVentes = ventes.filter(v => isDateInPeriod(v.date_vente || v.created_at));
+          if (incomesServiceIds.length > 0) {
+            filteredVentes = filteredVentes.filter(v => incomesServiceIds.includes(v.service_id));
+          }
+        }
+
+        if (incomesSources.includes('omra')) {
+          filteredOmra = omraPaiements.filter(p => isDateInPeriod(p.date_paiement || p.created_at));
+          if (incomesGroupIds.length > 0) {
+            filteredOmra = filteredOmra.filter(p => incomesGroupIds.includes(p.groupe_id));
+          }
+        }
+
+        const allIncomes = [
+          ...filteredVentes.map(v => ({ ...v, type: 'vente' })),
+          ...filteredOmra.map(o => ({ ...o, type: 'omra' }))
+        ];
+        
+        const totalVentes = filteredVentes.reduce((sum, v) => sum + (Number(v.total) || 0), 0);
+        const totalOmra = filteredOmra.reduce((sum, p) => sum + (Number(p.montant_dzd) || 0), 0);
+        const totalIncomes = totalVentes + totalOmra;
+
+        const totalPages = Math.ceil(allIncomes.length / ITEMS_PER_PAGE);
+        const paginatedIncomes = allIncomes.slice((currentPageIncomes - 1) * ITEMS_PER_PAGE, currentPageIncomes * ITEMS_PER_PAGE);
+
+        const exportIncomesPDF = () => {
+          const exportDate = new Date().toLocaleString('fr-FR');
+          const rows = allIncomes.map(item => {
+            if (item.type === 'vente') {
+              const serv = services.find(s => s.id === item.service_id);
+              return `
+                <tr>
+                  <td>${item.date_vente ? new Date(item.date_vente).toLocaleDateString('fr-FR') : '—'}</td>
+                  <td><b>VENTE</b></td>
+                  <td>${item.client_nom || '—'}</td>
+                  <td>${serv?.nom || '—'}</td>
+                  <td style="text-align: right; font-weight: bold; color: #1d4ed8;">${Number(item.total || 0).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</td>
+                </tr>
+              `;
+            } else {
+              const grp = omraGroupes.find(g => g.id === item.groupe_id);
+              return `
+                <tr>
+                  <td>${item.date_paiement ? new Date(item.date_paiement).toLocaleDateString('fr-FR') : '—'}</td>
+                  <td><b>OMRA</b></td>
+                  <td>${item.nom_client || '—'}</td>
+                  <td>${grp?.nom || '—'}</td>
+                  <td style="text-align: right; font-weight: bold; color: #7e22ce;">${Number(item.montant_dzd || 0).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</td>
+                </tr>
+              `;
+            }
+          }).join('');
+
+          const htmlContent = `
+            <!DOCTYPE html>
+            <html>
+              <head>
+                <title>Rapport des Revenus</title>
+                <style>
+                  body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; font-size: 12px; color: #1e293b; margin: 30px; line-height: 1.5; }
+                  .header { display: flex; justify-content: space-between; align-items: flex-start; border-bottom: 2px solid #10b981; padding-bottom: 12px; margin-bottom: 20px; }
+                  .title { font-size: 20px; font-weight: 800; color: #047857; }
+                  .meta { font-size: 11px; color: #475569; text-align: right; }
+                  .kpi-container { display: flex; gap: 15px; margin-bottom: 25px; }
+                  .kpi-card { flex: 1; padding: 12px; border-radius: 6px; border: 1px solid #e2e8f0; background: #f8fafc; }
+                  .kpi-title { font-size: 10px; text-transform: uppercase; color: #64748b; font-weight: 700; }
+                  .kpi-value { font-size: 16px; font-weight: 800; margin-top: 4px; }
+                  table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11px; }
+                  th { background: #f1f5f9; text-align: left; padding: 8px 10px; font-size: 10px; text-transform: uppercase; color: #475569; border: 1px solid #cbd5e1; font-weight: 700; }
+                  td { padding: 7px 10px; border: 1px solid #e2e8f0; }
+                  tr:nth-child(even) { background-color: #f8fafc; }
+                  @media print { body { margin: 15px; } }
+                </style>
+              </head>
+              <body>
+                <div class="header">
+                  <div>
+                    <div class="title">📈 RAPPORT DES REVENUS</div>
+                  </div>
+                  <div class="meta">
+                    <div><b>Période d'analyse :</b> ${getPeriodLabel()}</div>
+                    <div><b>Émis le :</b> ${exportDate}</div>
+                  </div>
+                </div>
+                <div class="kpi-container">
+                  <div class="kpi-card" style="border-left: 4px solid #3b82f6;">
+                    <div class="kpi-title">Total Ventes</div>
+                    <div class="kpi-value" style="color: #1d4ed8;">${totalVentes.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</div>
+                  </div>
+                  <div class="kpi-card" style="border-left: 4px solid #a855f7;">
+                    <div class="kpi-title">Total Omra</div>
+                    <div class="kpi-value" style="color: #7e22ce;">${totalOmra.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</div>
+                  </div>
+                  <div class="kpi-card" style="border-left: 4px solid #10b981; background: #ecfdf5;">
+                    <div class="kpi-title">Revenu Global</div>
+                    <div class="kpi-value" style="color: #047857;">${totalIncomes.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</div>
+                  </div>
+                </div>
+                <table>
+                  <thead>
+                    <tr>
+                      <th>Date</th>
+                      <th>Type</th>
+                      <th>Client / Pèlerin</th>
+                      <th>Détail</th>
+                      <th style="text-align: right;">Montant Encaissé (DZD)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    ${rows || '<tr><td colSpan="5" style="text-align:center;">Aucun revenu</td></tr>'}
+                  </tbody>
+                </table>
+                <script>window.onload = function() { window.print(); };</script>
+              </body>
+            </html>
+          `;
+          const printWindow = window.open('', '', 'height=800,width=1000');
+          printWindow.document.write(htmlContent);
+          printWindow.document.close();
+        };
+
+        return (
+          <div className="space-y-6">
+            <Card className="border-2 border-primary/20 bg-primary/5">
+              <CardContent className="p-4 space-y-4">
+                <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center text-green-700 font-bold shrink-0">
+                        <TrendingUp size={20} />
+                      </div>
+                      <div>
+                        <label className="text-xs font-bold text-foreground block mb-1">Source de revenu :</label>
+                        <MultiSelectDropdown 
+                          options={[
+                            { value: 'ventes', label: 'Ventes (Services)' },
+                            { value: 'omra', label: 'Omra (Paiements)' }
+                          ]}
+                          selected={incomesSources}
+                          onChange={(val) => { setIncomesSources(val); setCurrentPageIncomes(1); }}
+                          placeholder="Sélectionnez..."
+                          className="w-full sm:w-48"
+                        />
+                      </div>
+                    </div>
+
+                    {incomesSources.includes('ventes') && (
+                      <div className="flex items-center gap-3">
+                        <div>
+                          <label className="text-xs font-bold text-foreground block mb-1">Service (Ventes) :</label>
+                          <MultiSelectDropdown 
+                            options={services.map(s => ({ value: s.id, label: s.nom }))}
+                            selected={incomesServiceIds}
+                            onChange={(val) => { setIncomesServiceIds(val); setCurrentPageIncomes(1); }}
+                            placeholder="Tous les services"
+                            className="w-full sm:w-48 z-40"
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {incomesSources.includes('omra') && (
+                      <div className="flex items-center gap-3">
+                        <div>
+                          <label className="text-xs font-bold text-foreground block mb-1">Groupe Omra :</label>
+                          <MultiSelectDropdown 
+                            options={omraGroupes.map(g => ({ value: g.id, label: g.nom }))}
+                            selected={incomesGroupIds}
+                            onChange={(val) => { setIncomesGroupIds(val); setCurrentPageIncomes(1); }}
+                            placeholder="Tous les groupes"
+                            className="w-full sm:w-48 z-30"
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center text-blue-700 font-bold shrink-0">
+                      <Calendar size={20} />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold text-foreground block">Période d'Analyse :</label>
+                      <Select
+                        value={periodType}
+                        onChange={e => { setPeriodType(e.target.value); setCurrentPageIncomes(1); }}
+                        className="bg-white font-semibold mt-1 w-full sm:w-56"
+                      >
+                        <option value="all">📅 Toutes les dates</option>
+                        <option value="today">📅 Aujourd'hui</option>
+                        <option value="this_month">📅 Ce mois-ci</option>
+                        <option value="last_month">📅 Le mois dernier</option>
+                        <option value="this_year">📅 Cette année</option>
+                        <option value="custom">📅 Personnalisée</option>
+                      </Select>
+                    </div>
+                  </div>
+                </div>
+
+                {periodType === 'custom' && (
+                  <div className="flex flex-wrap items-center gap-4 pt-3 border-t border-primary/10 bg-white/60 p-3 rounded-lg">
+                    <span className="text-xs font-bold text-slate-700 flex items-center gap-1.5">
+                      <Calendar size={14} className="text-primary" /> Plage personnalisée :
+                    </span>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-semibold text-muted-foreground">Du:</span>
+                      <Input type="date" value={customStartDate} onChange={e => { setCustomStartDate(e.target.value); setCurrentPageIncomes(1); }} className="h-8 text-xs bg-white w-36" />
+                    </div>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="font-semibold text-muted-foreground">Au:</span>
+                      <Input type="date" value={customEndDate} onChange={e => { setCustomEndDate(e.target.value); setCurrentPageIncomes(1); }} className="h-8 text-xs bg-white w-36" />
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+              <Card className="shadow-sm border-l-4 border-l-blue-500">
+                <CardHeader className="py-3 px-5">
+                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Ventes</span>
+                  <div className="text-2xl font-extrabold text-blue-700 mt-1">
+                    {totalVentes.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} <span className="text-xs text-muted-foreground font-normal">DZD</span>
+                  </div>
+                </CardHeader>
+              </Card>
+
+              <Card className="shadow-sm border-l-4 border-l-purple-500">
+                <CardHeader className="py-3 px-5">
+                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Total Omra (Paiements)</span>
+                  <div className="text-2xl font-extrabold text-purple-700 mt-1">
+                    {totalOmra.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} <span className="text-xs text-muted-foreground font-normal">DZD</span>
+                  </div>
+                </CardHeader>
+              </Card>
+
+              <Card className="shadow-sm border-l-4 border-l-emerald-500">
+                <CardHeader className="py-3 px-5">
+                  <span className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Revenu Total Global</span>
+                  <div className="text-2xl font-extrabold text-emerald-700 mt-1">
+                    {totalIncomes.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} <span className="text-xs text-muted-foreground font-normal">DZD</span>
+                  </div>
+                </CardHeader>
+              </Card>
+            </div>
+
+            <Card className="shadow-md overflow-hidden">
+              <CardHeader className="bg-muted/30 py-4 border-b flex flex-row items-center justify-between">
+                <CardTitle className="text-base font-bold flex items-center gap-2">
+                  <TrendingUp size={18} /> Détails des Revenus (Ventes & Omra)
+                </CardTitle>
+                <Button onClick={exportIncomesPDF} size="sm" variant="outline" className="h-8 gap-2 border-emerald-200 text-emerald-700 hover:bg-emerald-50">
+                  <Printer size={14} /> Exporter PDF
+                </Button>
+              </CardHeader>
+              <CardContent className="p-0">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm text-left">
+                    <thead className="bg-muted/50 text-muted-foreground text-[11px] uppercase font-bold border-b">
+                      <tr>
+                        <th className="px-5 py-3">Date</th>
+                        <th className="px-5 py-3">Type</th>
+                        <th className="px-5 py-3">Client / Pèlerin</th>
+                        <th className="px-5 py-3">Détail (Service / Groupe)</th>
+                        <th className="px-5 py-3 text-right">Montant Encaissé (DZD)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-border">
+                      {paginatedIncomes.length === 0 ? (
+                        <tr>
+                          <td colSpan={5} className="px-5 py-8 text-center text-muted-foreground italic">Aucun revenu trouvé pour cette sélection.</td>
+                        </tr>
+                      ) : (
+                        paginatedIncomes.map((item, i) => {
+                          if (item.type === 'vente') {
+                            const serv = services.find(s => s.id === item.service_id);
+                            return (
+                              <tr key={`vente-${item.id}-${i}`} className="hover:bg-muted/20">
+                                <td className="px-5 py-3">{item.date_vente ? new Date(item.date_vente).toLocaleDateString('fr-FR') : '-'}</td>
+                                <td className="px-5 py-3"><span className="bg-blue-100 text-blue-800 text-[10px] font-extrabold px-2 py-0.5 rounded border border-blue-200">VENTE</span></td>
+                                <td className="px-5 py-3 font-medium">{item.client_nom || '-'}</td>
+                                <td className="px-5 py-3 text-muted-foreground text-xs">{serv?.nom || '-'}</td>
+                                <td className="px-5 py-3 text-right font-bold text-blue-700">
+                                  {Number(item.total || 0).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            );
+                          } else {
+                            const grp = omraGroupes.find(g => g.id === item.groupe_id);
+                            return (
+                              <tr key={`omra-${item.id}-${i}`} className="hover:bg-muted/20">
+                                <td className="px-5 py-3">{item.date_paiement ? new Date(item.date_paiement).toLocaleDateString('fr-FR') : '-'}</td>
+                                <td className="px-5 py-3"><span className="bg-purple-100 text-purple-800 text-[10px] font-extrabold px-2 py-0.5 rounded border border-purple-200">OMRA</span></td>
+                                <td className="px-5 py-3 font-medium">{item.nom_client || '-'}</td>
+                                <td className="px-5 py-3 text-muted-foreground text-xs">{grp?.nom || '-'}</td>
+                                <td className="px-5 py-3 text-right font-bold text-purple-700">
+                                  {Number(item.montant_dzd || 0).toLocaleString('fr-DZ', { minimumFractionDigits: 2 })}
+                                </td>
+                              </tr>
+                            );
+                          }
+                        })
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+                {totalPages > 1 && (
+                  <div className="p-4 border-t flex justify-center gap-2">
+                    {Array.from({ length: totalPages }).map((_, i) => (
+                      <Button key={i} variant={currentPageIncomes === i + 1 ? 'default' : 'outline'} size="sm" onClick={() => setCurrentPageIncomes(i + 1)}>
+                        {i + 1}
+                      </Button>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        );
+      })()}
+
       {/* --- VOLET RAPPORT FOURNISSEURS --- */}
+
       {activeTab === 'fournisseurs' && (
         <div className="space-y-6">
           {/* BARRE DE FILTRES : FOURNISSEUR & PÉRIODE */}
@@ -789,6 +1556,26 @@ const Rapports = () => {
               </div>
             </div>
 
+            {/* BANNIÈRE SI VENTES EXCLUES DE L'AUDIT */}
+            {excludedAuditVenteIds.length > 0 && (
+              <div className="flex items-center justify-between bg-amber-50 border border-amber-200 rounded-lg p-3 text-xs text-amber-900 shadow-sm">
+                <div className="flex items-center gap-2">
+                  <AlertCircle size={16} className="text-amber-600 shrink-0" />
+                  <span>
+                    <b>{excludedAuditVenteIds.length} dossier(s) de vente</b> exclu(s) manuellement de cet audit (ajustement visuel uniquement — la BDD est intacte).
+                  </span>
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs border-amber-300 hover:bg-amber-100 text-amber-900 gap-1 shrink-0 ml-2 font-medium"
+                  onClick={() => setExcludedAuditVenteIds([])}
+                >
+                  <RotateCcw size={12} /> Réinitialiser l'audit
+                </Button>
+              </div>
+            )}
+
             {/* SECTION 1 : VENTES CONCERNÉES */}
             <div className="space-y-3">
               <h3 className="text-sm font-bold text-slate-800 flex items-center justify-between border-b pb-2">
@@ -811,6 +1598,7 @@ const Rapports = () => {
                         <th className="px-3.5 py-2.5">Service</th>
                         <th className="px-3.5 py-2.5">Détails</th>
                         <th className="px-3.5 py-2.5 text-right">Tarif Dû (DZD)</th>
+                        <th className="px-3.5 py-2.5 text-center">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y">
@@ -827,6 +1615,17 @@ const Rapports = () => {
                             <td className="px-3.5 py-2.5 text-muted-foreground truncate max-w-[180px]" title={v.details}>{v.details || '—'}</td>
                             <td className="px-3.5 py-2.5 text-right font-extrabold text-blue-700">
                               {cost.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD
+                            </td>
+                            <td className="px-3.5 py-2.5 text-center whitespace-nowrap">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-md"
+                                title="Exclure ce dossier de l'audit (Conservé dans la BDD)"
+                                onClick={() => handleExcludeVenteFromAudit(v.id)}
+                              >
+                                <Trash2 size={14} />
+                              </Button>
                             </td>
                           </tr>
                         );

@@ -46,6 +46,7 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
 
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [previewImage, setPreviewImage] = useState(null);
 
   const [clientSearch, setClientSearch] = useState('');
   const [showDropdown, setShowDropdown] = useState(false);
@@ -82,7 +83,13 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
           
           let newOpts = parsed.options && parsed.options.length ? parsed.options.map(opt => {
             if (typeof opt === 'string') return { text: opt, images: [] };
-            return opt;
+            
+            const images = (opt.images || []).map(img => {
+              if (typeof img === 'string') return { id: Math.random().toString(), url: img };
+              return img;
+            });
+            
+            return { ...opt, images };
           }) : [{ text: '', images: [] }];
           
           // Migrate old global images to the first option if they exist
@@ -376,6 +383,7 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
   const filteredClients = clientsList.filter(c => c.nom.toLowerCase().includes(clientSearch.toLowerCase()));
 
   return (
+    <>
     <Dialog open={true} onOpenChange={onClose}>
       <DialogContent className="max-w-2xl p-0 overflow-hidden" onClose={onClose}>
         <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-6 py-5 border-b">
@@ -432,9 +440,83 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
               </div>
             </div>
 
+            {/* Recapitulatif visuel si le devis contient des détails Omra structurés */}
+            {(() => {
+              try {
+                if (formData.details_devis && formData.details_devis.trim().startsWith('{')) {
+                  const parsed = JSON.parse(formData.details_devis);
+                  if (parsed.service_type === 'omra') {
+                    return (
+                      <div className="p-4 rounded-xl bg-primary/5 border border-primary/20 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase tracking-wider text-primary flex items-center gap-1.5">
+                            🕋 Demande Omra Détaillée
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-primary/10 text-primary">
+                            {parsed.omra_mode === 'organise' ? 'Omra Organisée' : 'Omra À la Carte'}
+                          </span>
+                        </div>
+
+                        {/* Mode Organisé */}
+                        {parsed.omra_mode === 'organise' && (
+                          <div className="text-xs text-foreground/80 space-y-1">
+                            {parsed.groupe_nom && <div><strong>Groupe :</strong> {parsed.groupe_nom}</div>}
+                            {parsed.hotel_choisi && <div><strong>Hôtel / Formule :</strong> {parsed.hotel_choisi}</div>}
+                          </div>
+                        )}
+
+                        {/* Mode À la carte */}
+                        {parsed.omra_mode === 'a_la_carte' && (
+                          <div className="text-xs text-foreground/80 space-y-1">
+                            <div><strong>Parcours :</strong> {parsed.parcours === 'makkah_medina' ? 'Makkah & Médine' : 'Makkah seul'}</div>
+                            {parsed.hotel_medina && <div><strong>Hôtel Médine souhaité :</strong> {parsed.hotel_medina}</div>}
+                            {parsed.hotel_makkah && <div><strong>Hôtel Makkah souhaité :</strong> {parsed.hotel_makkah}</div>}
+                            {parsed.date_arrivee && <div><strong>Dates :</strong> {parsed.date_arrivee} → {parsed.date_depart || 'Non fixé'}</div>}
+                            {parsed.parcours === 'makkah_medina' && (
+                              <div><strong>Répartition :</strong> {parsed.nuits_medine || 0} nuits Médine / {parsed.nuits_makkah || 0} nuits Makkah</div>
+                            )}
+                            {parsed.vol_itineraire && <div><strong>Vol :</strong> {parsed.vol_itineraire}</div>}
+                            {parsed.option_vip && <div className="text-amber-600 font-bold">⭐ Option VIP incluse (Voiture privée)</div>}
+                          </div>
+                        )}
+
+                        {/* Chambres */}
+                        {parsed.chambres && (
+                          <div className="pt-2 border-t border-primary/10 flex flex-wrap items-center gap-1.5">
+                            <span className="text-[11px] font-bold text-muted-foreground mr-1">Chambres ({parsed.total_lits || 0} lits) :</span>
+                            {Object.entries(parsed.chambres).filter(([_, q]) => q > 0).map(([t, q]) => (
+                              <span key={t} className="text-[10px] font-black px-2 py-0.5 rounded-md bg-background border border-border shadow-2xs uppercase">
+                                {q} {t}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Enfants sans lit */}
+                        {Array.isArray(parsed.enfants_sans_lit) && parsed.enfants_sans_lit.length > 0 && (
+                          <div className="text-xs text-muted-foreground flex items-center gap-1.5">
+                            <span>👶 <strong>Enfants sans lit ({parsed.enfants_sans_lit.length}) :</strong></span>
+                            <span>{parsed.enfants_sans_lit.map(e => `${e.age} ans`).join(', ')}</span>
+                          </div>
+                        )}
+
+                        {/* Train Haramain */}
+                        {parsed.train_haramain && (
+                          <div className="text-xs text-emerald-600 font-bold flex items-center gap-1">
+                            🚅 Transfert Train Al-Haramain Express demandé
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                }
+              } catch (e) {}
+              return null;
+            })()}
+
             <div className="space-y-2.5">
               <Label className="text-sm font-bold text-foreground">Détails de la demande</Label>
-              <Textarea name="details_demande" rows={4} placeholder="Décrivez le besoin du prospect en détail..."
+              <Textarea name="details_demande" rows={3} placeholder="Décrivez le besoin du prospect en détail..."
                 value={formData.details_demande} onChange={handleChange} className="resize-none bg-muted/20 focus-visible:bg-transparent transition-colors" />
             </div>
 
@@ -463,7 +545,7 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
                         <div className="flex flex-wrap gap-2 mt-2 pt-2 border-t border-primary/10">
                           {opt.images.map((img, imgIdx) => (
                             <div key={imgIdx} className="relative w-14 h-14 rounded-md overflow-hidden border border-primary/20 shadow-sm group/img">
-                              <img src={img.url || img.base64} alt={`Option ${idx+1} Img ${imgIdx}`} className="w-full h-full object-cover" />
+                              <img src={img.url || img.base64} alt={`Option ${idx+1} Img ${imgIdx}`} className="w-full h-full object-cover cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setPreviewImage(img.url || img.base64)} />
                               <button type="button" onClick={() => removeImage(idx, imgIdx)} className="absolute top-1 right-1 bg-red-500/90 hover:bg-red-600 text-white rounded-full w-4 h-4 flex items-center justify-center text-[10px] opacity-0 group-hover/img:opacity-100 transition-opacity">
                                 <X size={10} />
                               </button>
@@ -531,6 +613,19 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
       </DialogContent>
       {isAddingClient && <ClientForm onClose={() => setIsAddingClient(false)} onSave={handleClientSaved} />}
     </Dialog>
+    <Dialog open={!!previewImage} onOpenChange={() => setPreviewImage(null)}>
+      <DialogContent className="max-w-4xl bg-transparent border-none shadow-none flex items-center justify-center [&>button]:hidden">
+        {previewImage && (
+          <div className="relative inline-block">
+            <button type="button" onClick={() => setPreviewImage(null)} className="absolute -top-3 -right-3 bg-background hover:bg-muted text-foreground rounded-full p-1.5 shadow-lg border z-50 transition-colors">
+              <X size={20} />
+            </button>
+            <img src={previewImage} alt="Preview" className="max-w-full max-h-[85vh] object-contain rounded-md shadow-2xl" />
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+    </>
   );
 };
 

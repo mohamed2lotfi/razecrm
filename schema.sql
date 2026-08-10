@@ -92,6 +92,8 @@ CREATE TABLE public.factures (
   details text,
   service_id uuid,
   created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  numero text,
+  items jsonb,
   CONSTRAINT factures_pkey PRIMARY KEY (id),
   CONSTRAINT factures_service_id_fkey FOREIGN KEY (service_id) REFERENCES public.services(id)
 );
@@ -108,20 +110,6 @@ CREATE TABLE public.omra_groupes (
   gratuites integer,
   created_at timestamp with time zone DEFAULT now(),
   CONSTRAINT omra_groupes_pkey PRIMARY KEY (id)
-);
-CREATE TABLE public.omra_depenses (
-  id uuid NOT NULL DEFAULT uuid_generate_v4(),
-  titre text NOT NULL,
-  categorie text,
-  date_depense date,
-  reference_paiement text,
-  montant_original numeric,
-  devise text,
-  taux_change numeric,
-  montant_dzd numeric,
-  groupe_ids jsonb,
-  created_at timestamp with time zone DEFAULT now(),
-  CONSTRAINT omra_depenses_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.omra_enregistrements (
   id uuid NOT NULL DEFAULT uuid_generate_v4(),
@@ -182,9 +170,9 @@ CREATE TABLE public.omra_paiements_commissions (
 CREATE TABLE public.outcomes_enveloppes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   nom text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
   type_enveloppe text NOT NULL DEFAULT 'standard'::text,
   fournisseur_id uuid,
-  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
   CONSTRAINT outcomes_enveloppes_pkey PRIMARY KEY (id),
   CONSTRAINT outcomes_enveloppes_fournisseur_id_fkey FOREIGN KEY (fournisseur_id) REFERENCES public.fournisseurs(id)
 );
@@ -200,6 +188,8 @@ CREATE TABLE public.outcomes (
   created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
   sous_enveloppe_id uuid NOT NULL,
   description text,
+  groupe_ids jsonb,
+  repartition_mode text DEFAULT 'egal'::text,
   CONSTRAINT outcomes_pkey PRIMARY KEY (id),
   CONSTRAINT outcomes_enveloppe_id_fkey FOREIGN KEY (enveloppe_id) REFERENCES public.outcomes_enveloppes(id),
   CONSTRAINT outcomes_sous_enveloppe_id_fkey FOREIGN KEY (sous_enveloppe_id) REFERENCES public.outcomes_sous_enveloppes(id)
@@ -208,9 +198,9 @@ CREATE TABLE public.outcomes_sous_enveloppes (
   id uuid NOT NULL DEFAULT gen_random_uuid(),
   enveloppe_id uuid NOT NULL,
   nom text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
   service_ids jsonb,
   compagnie text,
-  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
   CONSTRAINT outcomes_sous_enveloppes_pkey PRIMARY KEY (id),
   CONSTRAINT outcomes_sous_enveloppes_enveloppe_id_fkey FOREIGN KEY (enveloppe_id) REFERENCES public.outcomes_enveloppes(id)
 );
@@ -221,4 +211,158 @@ CREATE TABLE public.ai_settings (
   model_name text,
   updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
   CONSTRAINT ai_settings_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.document_scan_settings (
+  id integer NOT NULL DEFAULT 1,
+  global_scan_path text DEFAULT 'C:\AgencyCRM\Documents_Scannes'::text,
+  printer_ip text DEFAULT ''::text,
+  dpi integer DEFAULT 300,
+  format text DEFAULT 'pdf'::text,
+  color_mode text DEFAULT 'color'::text,
+  auto_crop boolean DEFAULT true,
+  auto_duplex boolean DEFAULT false,
+  actions jsonb NOT NULL,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT document_scan_settings_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.document_scans (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  action_id integer NOT NULL,
+  action_title text NOT NULL,
+  client_nom text,
+  file_name text NOT NULL,
+  file_path text NOT NULL,
+  format text DEFAULT 'pdf'::text,
+  dpi integer DEFAULT 300,
+  printer_ip text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT document_scans_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.employees (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  first_name text NOT NULL,
+  last_name text NOT NULL,
+  birth_date date,
+  ssn text,
+  bank_details text,
+  email text,
+  phone text,
+  status text DEFAULT 'active'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  salary numeric,
+  salary_date integer,
+  CONSTRAINT employees_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.visa_countries (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  nom text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT visa_countries_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.visa_types (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  country_id uuid NOT NULL,
+  nom text NOT NULL,
+  dossier jsonb,
+  tarif_base numeric DEFAULT 0,
+  tarif_vente numeric DEFAULT 0,
+  duree_traitement text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT visa_types_pkey PRIMARY KEY (id),
+  CONSTRAINT visa_types_country_id_fkey FOREIGN KEY (country_id) REFERENCES public.visa_countries(id)
+);
+CREATE TABLE public.visa_demandes (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  vente_id uuid,
+  client_id uuid,
+  visa_type_id uuid,
+  country_id uuid,
+  passager_nom text NOT NULL,
+  tarif_base numeric DEFAULT 0,
+  tarif_vente numeric DEFAULT 0,
+  statut text DEFAULT 'Nouveau'::text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT visa_demandes_pkey PRIMARY KEY (id),
+  CONSTRAINT visa_demandes_vente_id_fkey FOREIGN KEY (vente_id) REFERENCES public.ventes(id),
+  CONSTRAINT visa_demandes_visa_type_id_fkey FOREIGN KEY (visa_type_id) REFERENCES public.visa_types(id),
+  CONSTRAINT visa_demandes_country_id_fkey FOREIGN KEY (country_id) REFERENCES public.visa_countries(id)
+);
+CREATE TABLE public.visa_dossier_tracking (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  demande_id uuid NOT NULL,
+  document_nom text NOT NULL,
+  recu boolean DEFAULT false,
+  date_reception timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT visa_dossier_tracking_pkey PRIMARY KEY (id),
+  CONSTRAINT visa_dossier_tracking_demande_id_fkey FOREIGN KEY (demande_id) REFERENCES public.visa_demandes(id)
+);
+CREATE TABLE public.airlines (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  code_iata text NOT NULL,
+  nom text NOT NULL,
+  commission numeric DEFAULT 0,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT airlines_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.contact_types (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  nom text NOT NULL,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT contact_types_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.banque_contacts (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  nom text NOT NULL,
+  email text,
+  telephone text,
+  type text,
+  location text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  compagnie text,
+  poste text,
+  ville text,
+  CONSTRAINT banque_contacts_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.campagnes_email (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  nom text NOT NULL,
+  sujet text,
+  contenu text,
+  type_audience text,
+  filtres_audience jsonb,
+  statut text DEFAULT 'Brouillon'::text,
+  date_envoi timestamp with time zone,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  destinataires_count integer DEFAULT 0,
+  CONSTRAINT campagnes_email_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.historique_emails (
+  id uuid NOT NULL DEFAULT gen_random_uuid(),
+  campagne_id uuid,
+  destinataire_email text,
+  statut_envoi text,
+  created_at timestamp with time zone NOT NULL DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT historique_emails_pkey PRIMARY KEY (id),
+  CONSTRAINT historique_emails_campagne_id_fkey FOREIGN KEY (campagne_id) REFERENCES public.campagnes_email(id)
+);
+CREATE TABLE public.agency_settings (
+  id integer NOT NULL DEFAULT 1,
+  nom_agence text DEFAULT 'AGENCE DE VOYAGE'::text,
+  adresse text,
+  telephone text,
+  email text,
+  logo_url text,
+  updated_at timestamp with time zone DEFAULT timezone('utc'::text, now()),
+  CONSTRAINT agency_settings_pkey PRIMARY KEY (id)
+);
+CREATE TABLE public.profiles (
+  id uuid NOT NULL,
+  email text,
+  nom text,
+  role text NOT NULL DEFAULT 'agent'::text,
+  created_at timestamp with time zone DEFAULT now(),
+  updated_at timestamp with time zone DEFAULT now(),
+  CONSTRAINT profiles_pkey PRIMARY KEY (id),
+  CONSTRAINT profiles_role_check CHECK (role = ANY (ARRAY['admin'::text, 'agent'::text]))
 );

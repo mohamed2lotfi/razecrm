@@ -10,13 +10,15 @@ import { Textarea } from '@/components/ui/textarea';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { 
   Plus, ArrowLeft, Users, Building2, Phone, Utensils, 
   Tag, UserPlus, Plane, Calendar, Trash2, Pencil, 
   Baby, CreditCard, ArrowRightLeft, BedDouble, FileText,
   User, Wallet, Calculator, TrendingUp, Table, Loader2,
   Printer, Edit2, Upload, File, ChevronDown, CheckCircle,
-  AlertCircle, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight
+  AlertCircle, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight,
+  FolderOpen, Camera, UserCheck, X, Check
 } from 'lucide-react';
 import ClientForm from '@/components/ClientForm';
 import { ReactSortable } from "react-sortablejs";
@@ -131,6 +133,7 @@ const mapCamelToCommission = (cam, interList) => ({
 const OmraGroupDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
+  const { isAdmin } = useAuth();
   
   const [groupes, setGroupes] = useState([]);
   const [intermediaires, setIntermediaires] = useState([]);
@@ -140,6 +143,7 @@ const OmraGroupDetails = () => {
   const [paiementsCommissions, setPaiementsCommissions] = useState([]);
   const [hotels, setHotels] = useState([]);
   const [clients, setClients] = useState([]);
+  const [agencySettings, setAgencySettings] = useState(null);
   const [loading, setLoading] = useState(true);
   
   const location = useLocation();
@@ -159,7 +163,7 @@ const OmraGroupDetails = () => {
       setLoading(false);
       return;
     }
-    const [grp, inter, enr, pai, com, hotelsData, clientsData, outRes, envRes, subEnvRes] = await Promise.all([
+    const [grp, inter, enr, pai, com, hotelsData, clientsData, outRes, envRes, subEnvRes, agencyRes, pelRes] = await Promise.all([
       supabase.from('omra_groupes').select('*'),
       supabase.from('intermediaires').select('*'),
       supabase.from('omra_enregistrements').select('*').eq('groupe_id', id),
@@ -169,10 +173,14 @@ const OmraGroupDetails = () => {
       supabase.from('clients').select('*').order('nom', { ascending: true }),
       supabase.from('outcomes').select('*'),
       supabase.from('outcomes_enveloppes').select('*'),
-      supabase.from('outcomes_sous_enveloppes').select('*')
+      supabase.from('outcomes_sous_enveloppes').select('*'),
+      supabase.from('agency_settings').select('*').single(),
+      supabase.from('pelerins').select('*').then(res => res, () => ({ data: [] }))
     ]);
     
+    if (agencyRes?.data) setAgencySettings(agencyRes.data);
     if (grp.data) setGroupes(grp.data);
+    if (pelRes?.data) setPelerinsMaster(pelRes.data);
     const iList = inter.data || [];
     setIntermediaires(iList);
     
@@ -221,6 +229,197 @@ const OmraGroupDetails = () => {
 
   const [activeTab, setActiveTab] = useState('enregistrements'); // enregistrements | chambres | paiements | commissions | finance
   const [activeListHotelId, setActiveListHotelId] = useState('');
+  const [pelerinsMaster, setPelerinsMaster] = useState([]);
+
+  // Modal Fiche Pèlerin (Sous-modale depuis le formulaire d'enregistrement)
+  const [isPelerinDetailModalOpen, setIsPelerinDetailModalOpen] = useState(false);
+  const [activePelerinTarget, setActivePelerinTarget] = useState(null); // { type: 'pelerin' | 'enfant', index: number }
+  const [pelerinDetailFormData, setPelerinDetailFormData] = useState({
+    id: '',
+    nom: '',
+    prenom: '',
+    sexe: 'H',
+    date_naissance: '',
+    num_passeport: '',
+    date_expiration_passeport: '',
+    nationalite: 'Algérienne',
+    telephone: '',
+    photo_url: '',
+    num_visa: '',
+    notes: ''
+  });
+  const [uploadingPelerinPhoto, setUploadingPelerinPhoto] = useState(false);
+
+  // Ouvrir la sous-modale pour un pèlerin
+  const handleOpenPelerinModal = (type, index) => {
+    setActivePelerinTarget({ type, index });
+    const targetList = type === 'pelerin' ? formData.pelerins : (formData.enfantsSansLit || []);
+    const currentItem = targetList[index] || {};
+
+    // Chercher si un profil existant existe dans pelerinsMaster
+    const existingMaster = pelerinsMaster.find(p => 
+      (currentItem.pelerin_id && p.id === currentItem.pelerin_id) ||
+      (currentItem.nom && p.nom && p.nom.trim().toLowerCase() === currentItem.nom.trim().toLowerCase())
+    );
+
+    setPelerinDetailFormData({
+      id: currentItem.pelerin_id || existingMaster?.id || (crypto.randomUUID ? crypto.randomUUID() : `p_${Date.now()}`),
+      nom: currentItem.nom || existingMaster?.nom || '',
+      prenom: currentItem.prenom || existingMaster?.prenom || '',
+      sexe: currentItem.sexe || existingMaster?.sexe || 'H',
+      date_naissance: currentItem.date_naissance || existingMaster?.date_naissance || '',
+      num_passeport: currentItem.num_passeport || existingMaster?.num_passeport || '',
+      date_expiration_passeport: currentItem.date_expiration_passeport || existingMaster?.date_expiration_passeport || '',
+      nationalite: currentItem.nationalite || existingMaster?.nationalite || 'Algérienne',
+      telephone: currentItem.telephone || existingMaster?.telephone || formData.telephone || '',
+      photo_url: currentItem.photo_url || existingMaster?.photo_url || '',
+      num_visa: currentItem.num_visa || existingMaster?.num_visa || '',
+      notes: currentItem.notes || existingMaster?.notes || ''
+    });
+
+    setIsPelerinDetailModalOpen(true);
+  };
+
+  // Sélectionner un profil existant depuis la liste master
+  const handleSelectMasterPelerin = (masterId) => {
+    if (!masterId) return;
+    const found = pelerinsMaster.find(p => p.id === masterId);
+    if (!found) return;
+    setPelerinDetailFormData(prev => ({
+      ...prev,
+      id: found.id,
+      nom: found.nom || prev.nom,
+      prenom: found.prenom || '',
+      sexe: found.sexe || prev.sexe || 'H',
+      date_naissance: found.date_naissance || '',
+      num_passeport: found.num_passeport || '',
+      date_expiration_passeport: found.date_expiration_passeport || '',
+      nationalite: found.nationalite || 'Algérienne',
+      telephone: found.telephone || prev.telephone || '',
+      photo_url: found.photo_url || '',
+      num_visa: found.num_visa || '',
+      notes: found.notes || ''
+    }));
+  };
+
+  // Upload photo / scan passeport vers Supabase storage
+  const handleUploadPelerinPhoto = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setUploadingPelerinPhoto(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `pelerins/${Date.now()}_${Math.random().toString(36).substr(2, 9)}.${fileExt}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from('agency-media')
+        .upload(fileName, file, { upsert: true });
+
+      if (uploadError) {
+        alert("Erreur lors de l'upload: " + uploadError.message);
+      } else {
+        const { data: publicUrlData } = supabase.storage
+          .from('agency-media')
+          .getPublicUrl(fileName);
+
+        setPelerinDetailFormData(prev => ({ ...prev, photo_url: publicUrlData.publicUrl }));
+      }
+    } catch (err) {
+      console.error(err);
+      alert("Erreur lors de l'envoi de la photo.");
+    } finally {
+      setUploadingPelerinPhoto(false);
+    }
+  };
+
+  // Enregistrer les détails de la sous-modale dans formData et la table pelerins
+  const handleSavePelerinModalDetails = async (e) => {
+    if (e) e.preventDefault();
+    if (!pelerinDetailFormData.nom.trim()) {
+      alert("Le nom du pèlerin est obligatoire.");
+      return;
+    }
+
+    const pId = pelerinDetailFormData.id || (crypto.randomUUID ? crypto.randomUUID() : `p_${Date.now()}`);
+    const fullNom = pelerinDetailFormData.prenom 
+      ? `${pelerinDetailFormData.nom.trim()} ${pelerinDetailFormData.prenom.trim()}` 
+      : pelerinDetailFormData.nom.trim();
+
+    // Mettre à jour l'élément ciblé dans formData
+    if (activePelerinTarget) {
+      const { type, index } = activePelerinTarget;
+      if (type === 'pelerin') {
+        setFormData(prev => {
+          const list = [...prev.pelerins];
+          list[index] = {
+            ...list[index],
+            pelerin_id: pId,
+            nom: fullNom,
+            sexe: pelerinDetailFormData.sexe,
+            prenom: pelerinDetailFormData.prenom,
+            num_passeport: pelerinDetailFormData.num_passeport,
+            date_naissance: pelerinDetailFormData.date_naissance,
+            date_expiration_passeport: pelerinDetailFormData.date_expiration_passeport,
+            nationalite: pelerinDetailFormData.nationalite,
+            photo_url: pelerinDetailFormData.photo_url,
+            num_visa: pelerinDetailFormData.num_visa,
+            telephone: pelerinDetailFormData.telephone,
+            notes: pelerinDetailFormData.notes
+          };
+          return { ...prev, pelerins: list };
+        });
+      } else if (type === 'enfant') {
+        setFormData(prev => {
+          const list = [...(prev.enfantsSansLit || [])];
+          list[index] = {
+            ...list[index],
+            pelerin_id: pId,
+            nom: fullNom,
+            prenom: pelerinDetailFormData.prenom,
+            num_passeport: pelerinDetailFormData.num_passeport,
+            date_naissance: pelerinDetailFormData.date_naissance,
+            photo_url: pelerinDetailFormData.photo_url,
+            telephone: pelerinDetailFormData.telephone
+          };
+          return { ...prev, enfantsSansLit: list };
+        });
+      }
+    }
+
+    // Synchronisation avec la table pelerins
+    try {
+      const payload = {
+        id: pId,
+        nom: pelerinDetailFormData.nom.trim(),
+        prenom: pelerinDetailFormData.prenom?.trim() || null,
+        sexe: pelerinDetailFormData.sexe || 'H',
+        date_naissance: pelerinDetailFormData.date_naissance || null,
+        num_passeport: pelerinDetailFormData.num_passeport?.trim() || null,
+        date_expiration_passeport: pelerinDetailFormData.date_expiration_passeport || null,
+        nationalite: pelerinDetailFormData.nationalite || 'Algérienne',
+        telephone: pelerinDetailFormData.telephone?.trim() || formData.telephone || null,
+        photo_url: pelerinDetailFormData.photo_url || null,
+        num_visa: pelerinDetailFormData.num_visa?.trim() || null,
+        notes: pelerinDetailFormData.notes?.trim() || null,
+        client_id: formData.clientId || null,
+        updated_at: new Date().toISOString()
+      };
+
+      await supabase.from('pelerins').upsert(payload, { onConflict: 'id' });
+
+      // Mettre à jour localement pelerinsMaster
+      setPelerinsMaster(prev => {
+        const exists = prev.some(p => p.id === pId);
+        if (exists) return prev.map(p => p.id === pId ? { ...p, ...payload } : p);
+        return [...prev, payload];
+      });
+    } catch (err) {
+      console.warn("Synchronisation pelerins:", err);
+    }
+
+    setIsPelerinDetailModalOpen(false);
+  };
 
   useEffect(() => {
     if (groupe?.hotels?.[0]?.hotelId && !activeListHotelId) {
@@ -302,8 +501,24 @@ const OmraGroupDetails = () => {
   );
 
   const handleSelectClient = (client) => {
+    if (!client) return;
     setClientSearch(client.nom);
-    setFormData(prev => ({ ...prev, clientId: client.id }));
+    setFormData(prev => {
+      let updatedPelerins = [...prev.pelerins];
+      if (updatedPelerins.length > 0 && (!updatedPelerins[0].nom || updatedPelerins[0].nom.trim() === '')) {
+        updatedPelerins[0] = {
+          ...updatedPelerins[0],
+          nom: client.nom,
+          telephone: client.telephone || ''
+        };
+      }
+      return {
+        ...prev,
+        clientId: client.id,
+        telephone: client.telephone || prev.telephone,
+        pelerins: updatedPelerins
+      };
+    });
     setShowDropdown(false);
   };
 
@@ -730,9 +945,50 @@ const OmraGroupDetails = () => {
     const isNew = !editingId;
     const chambreIdToUse = formData.chambreId || (isNew ? Date.now().toString() : editingId);
     
+    // Enrichir chaque pèlerin avec un pelerin_id unique
+    const pelerinsWithIds = formData.pelerins
+      .filter(p => p.nom && p.nom.trim() !== '')
+      .map(p => ({
+        ...p,
+        pelerin_id: p.pelerin_id || (crypto.randomUUID ? crypto.randomUUID() : `p_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
+      }));
+
+    const enfantsWithIds = (formData.enfantsSansLit || [])
+      .filter(e => e.nom && e.nom.trim() !== '')
+      .map(e => ({
+        ...e,
+        pelerin_id: e.pelerin_id || (crypto.randomUUID ? crypto.randomUUID() : `p_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`)
+      }));
+
+    // Synchronisation en arrière-plan avec la table 'pelerins'
+    try {
+      const pelerinsToUpsert = [
+        ...pelerinsWithIds.map(p => ({
+          id: p.pelerin_id,
+          nom: p.nom.trim(),
+          sexe: p.sexe || 'H',
+          telephone: formData.telephone || null,
+          client_id: formData.clientId || null
+        })),
+        ...enfantsWithIds.map(e => ({
+          id: e.pelerin_id,
+          nom: e.nom.trim(),
+          sexe: 'H',
+          telephone: formData.telephone || null,
+          client_id: formData.clientId || null
+        }))
+      ];
+      if (pelerinsToUpsert.length > 0) {
+        supabase.from('pelerins').upsert(pelerinsToUpsert, { onConflict: 'id' }).then();
+      }
+    } catch (pErr) {
+      console.warn("Table pelerins non encore initialisée ou erreur silencieuse:", pErr);
+    }
+
     const record = {
       ...formData,
-      pelerins: formData.pelerins.filter(p => p.nom.trim() !== ''),
+      pelerins: pelerinsWithIds,
+      enfantsSansLit: enfantsWithIds,
       chambreId: chambreIdToUse,
       groupeId: id,
       totalChambre,
@@ -777,10 +1033,11 @@ const OmraGroupDetails = () => {
 
   // --- Payment Handlers ---
   const handleOpenPayment = (enr) => {
+    const foundClient = clients.find(c => c.id === enr.clientId);
     const firstPelerin = enr.pelerins?.[0]?.nom || '';
     setPaymentFormData({
       ...emptyPaymentForm,
-      nomClient: firstPelerin
+      nomClient: foundClient ? foundClient.nom : firstPelerin
     });
     setCurrentEnregistrementId(enr.id);
     setIsPaymentModalOpen(true);
@@ -910,8 +1167,10 @@ const OmraGroupDetails = () => {
     return enr ? (enr.pelerins?.[0]?.nom || 'Chambre sans nom') : '—';
   };
   const getHotelName = (hId) => {
-    const h = hotels.find(x => x.id === hId);
-    return h ? h.nom : hId;
+    if (!hId) return 'Hôtel non défini';
+    const h = hotels.find(x => x.id === hId || x.nom === hId || (typeof hId === 'string' && hId.startsWith(x.nom)));
+    if (h) return h.nom;
+    return typeof hId === 'string' ? hId.replace(/undefined\s*étoiles/gi, '').trim() : hId;
   };
 
   const handleUpdateRoomName = async (oldRoomId, occupantsInRoom) => {
@@ -989,6 +1248,405 @@ const OmraGroupDetails = () => {
   const computedDZD_Payment = isForeignCurrencyPayment 
     ? (Number(paymentFormData.montantOriginal) || 0) * (Number(paymentFormData.tauxChange) || 0)
     : (Number(paymentFormData.montantOriginal) || 0);
+
+  const handlePrintVueListe = () => {
+    const currentHotelId = activeListHotelId || groupe?.hotels?.[0]?.hotelId;
+    const hotelEnregistrements = groupeEnregistrements.filter(e => e.hotelId === currentHotelId);
+    const currentHotelName = getHotelName(currentHotelId);
+
+    const exportDate = new Date().toLocaleDateString('fr-FR', {
+      day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit'
+    });
+
+    let totalTarifLitSum = 0;
+    let totalRestoSum = 0;
+    let totalReductionSum = 0;
+    let totalCommissionSum = 0;
+    let totalDuSum = 0;
+    let totalPayeSum = 0;
+    let totalResteSum = 0;
+    let totalPaxCount = 0;
+
+    const rows = hotelEnregistrements.map((enr) => {
+      let remainingPaymentToDistribute = getEnregistrementPaid(enr.id);
+      const enrHotelConfig = groupe?.hotels?.find(h => h.hotelId === enr.hotelId);
+
+      const tousPelerins = [
+        ...(enr.pelerins || []),
+        ...(enr.enfantsSansLit || []).map(enf => ({ ...enf, tarifPerso: enf.tarif, chd: true, isEnfantSansLit: true }))
+      ];
+
+      const passagersAdultes = tousPelerins.filter(p => !p.guide && !p.chd && !p.isEnfantSansLit);
+      const reductionPartagee = passagersAdultes.length > 0 ? Number(enr.reduction || 0) / passagersAdultes.length : 0;
+
+      return tousPelerins.map((pelerin, index) => {
+        totalPaxCount++;
+        const isAdult = !pelerin.guide && !pelerin.chd && !pelerin.isEnfantSansLit;
+        const tarifLit = pelerin.guide 
+          ? 0 
+          : (pelerin.isEnfantSansLit 
+              ? Number(pelerin.tarifPerso) 
+              : (pelerin.tarifPerso ? Number(pelerin.tarifPerso) : (Number(enrHotelConfig?.[CHAMBRE_KEYS[enr.typeChambre]]) || 0)));
+        
+        let reduction = (pelerin.guide || !pelerin.chd || pelerin.isEnfantSansLit) ? 0 : (Number(enrHotelConfig?.reductionChd) || 0);
+        if (isAdult) reduction += reductionPartagee;
+        
+        let extraCosts = 0;
+        if (pelerin.restauration && !pelerin.guide && !pelerin.isEnfantSansLit) extraCosts += Number(enrHotelConfig?.restauration || 0);
+        
+        const commission = (pelerin.guide || pelerin.isEnfantSansLit) ? 0 : Number(enr.commissionCustom || 0);
+        
+        let totalDu = tarifLit - reduction + extraCosts;
+        if (enr.paiementRabatteur) {
+          totalDu -= commission;
+        }
+        totalDu = Math.max(0, totalDu);
+        
+        const totalPaye = Math.min(totalDu, remainingPaymentToDistribute);
+        remainingPaymentToDistribute -= totalPaye;
+        
+        const reste = totalDu - totalPaye;
+        
+        totalTarifLitSum += tarifLit;
+        totalRestoSum += extraCosts;
+        totalReductionSum += reduction;
+        totalCommissionSum += commission;
+        totalDuSum += totalDu;
+        totalPayeSum += totalPaye;
+        totalResteSum += reste;
+
+        let etatLabel = 'En attente';
+        let etatBg = '#ef4444';
+        if (reste === 0 && totalDu > 0) {
+          etatLabel = 'Payé';
+          etatBg = '#16a34a';
+        } else if (totalDu === 0 && reste === 0) {
+          etatLabel = 'Payé';
+          etatBg = '#16a34a';
+        } else if (totalPaye > 0) {
+          etatLabel = 'Versement';
+          etatBg = '#d97706';
+        }
+
+        const tags = [];
+        if (pelerin.isEnfantSansLit) tags.push('<span class="tag tag-purple">Sans Lit</span>');
+        if (pelerin.chd && !pelerin.isEnfantSansLit) tags.push('<span class="tag tag-amber">CHD</span>');
+        if (pelerin.restauration) tags.push('<span class="tag tag-orange">Resto</span>');
+        if (pelerin.guide) tags.push('<span class="tag tag-blue">Guide</span>');
+
+        const roomCell = index === 0 ? `
+          <td rowspan="${tousPelerins.length}" class="room-cell">
+            <div class="room-num">${enr.chambreId ? 'Chambre N°' + enr.chambreId : 'Non attribuée'}</div>
+            <div class="room-type">${enr.typeChambre || '—'}</div>
+          </td>
+        ` : '';
+
+        return `
+          <tr>
+            ${roomCell}
+            <td>
+              <div class="pax-name">${pelerin.nom || '—'}</div>
+              ${tags.length > 0 ? `<div class="tags-row">${tags.join(' ')}</div>` : ''}
+            </td>
+            <td style="text-align: center; font-weight: 600;">${pelerin.sexe || 'H'}</td>
+            <td style="text-align: right;">${fmtDZD(tarifLit)}</td>
+            <td style="text-align: right; color: #ea580c; font-weight: 500;">${extraCosts > 0 ? fmtDZD(extraCosts) : '0,00'}</td>
+            <td style="text-align: right; color: #d97706;">${reduction > 0 ? '-' + fmtDZD(reduction) : '0,00'}</td>
+            <td style="text-align: right; color: #6b7280;">${commission > 0 ? fmtDZD(commission) : '0,00'}</td>
+            <td style="text-align: right; font-weight: 700; color: #1d4ed8; background-color: #eff6ff;">${fmtDZD(totalDu)}</td>
+            <td style="text-align: right; font-weight: 700; color: #059669; background-color: #f0fdf4;">${fmtDZD(totalPaye)}</td>
+            <td style="text-align: right; font-weight: 700; color: #dc2626; background-color: #fef2f2;">${fmtDZD(reste)}</td>
+            <td style="text-align: center;">
+              <span class="status-badge" style="background-color: ${etatBg};">${etatLabel}</span>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }).join('');
+
+    const agencyName = agencySettings?.nom_agence || 'EL-MOKHTAR VOYAGES & OMRA';
+    const agencyPhone = agencySettings?.telephone || '';
+    const agencyLogo = agencySettings?.logo_url || '';
+
+    const htmlContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8" />
+          <title>Liste des Pèlerins - ${groupe?.nom || 'Omra'} - ${currentHotelName}</title>
+          <style>
+            @page {
+              size: A4 landscape;
+              margin: 8mm;
+            }
+            * {
+              box-sizing: border-box;
+            }
+            body {
+              font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+              font-size: 11px;
+              color: #1e293b;
+              margin: 0;
+              padding: 12px;
+              background: #ffffff;
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
+            .header {
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              border-bottom: 2px solid #059669;
+              padding-bottom: 10px;
+              margin-bottom: 12px;
+            }
+            .header-left {
+              display: flex;
+              align-items: center;
+              gap: 15px;
+            }
+            .logo {
+              max-height: 45px;
+              max-width: 140px;
+              object-fit: contain;
+            }
+            .title {
+              font-size: 17px;
+              font-weight: 800;
+              color: #065f46;
+              margin: 0;
+              text-transform: uppercase;
+              letter-spacing: -0.5px;
+            }
+            .subtitle {
+              font-size: 11.5px;
+              color: #475569;
+              margin-top: 2px;
+              font-weight: 600;
+            }
+            .meta {
+              text-align: right;
+              font-size: 10.5px;
+              color: #475569;
+              line-height: 1.5;
+            }
+            .kpis {
+              display: grid;
+              grid-template-columns: repeat(4, 1fr);
+              gap: 8px;
+              margin-bottom: 12px;
+            }
+            .kpi-card {
+              background: #f8fafc;
+              border: 1px solid #e2e8f0;
+              border-radius: 6px;
+              padding: 6px 10px;
+            }
+            .kpi-label {
+              font-size: 8.5px;
+              text-transform: uppercase;
+              color: #64748b;
+              font-weight: 700;
+              letter-spacing: 0.5px;
+            }
+            .kpi-value {
+              font-size: 13px;
+              font-weight: 800;
+              margin-top: 2px;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              font-size: 10px;
+              margin-bottom: 12px;
+            }
+            th {
+              background: #f1f5f9;
+              color: #334155;
+              padding: 5px 6px;
+              font-weight: 700;
+              text-transform: uppercase;
+              font-size: 9px;
+              border: 1px solid #cbd5e1;
+              letter-spacing: 0.3px;
+            }
+            td {
+              padding: 4px 6px;
+              border: 1px solid #e2e8f0;
+              vertical-align: middle;
+            }
+            tr {
+              page-break-inside: avoid;
+            }
+            tr:nth-child(even) {
+              background-color: #fafafa;
+            }
+            .room-cell {
+              background: #f8fafc !important;
+              text-align: center;
+              font-weight: 700;
+              vertical-align: middle;
+              border-right: 2px solid #cbd5e1;
+            }
+            .room-num {
+              font-size: 10.5px;
+              color: #0f172a;
+            }
+            .room-type {
+              font-size: 8.5px;
+              color: #64748b;
+              margin-top: 1px;
+            }
+            .pax-name {
+              font-weight: 600;
+              color: #0f172a;
+            }
+            .tags-row {
+              margin-top: 1px;
+              display: flex;
+              gap: 2px;
+            }
+            .tag {
+              display: inline-block;
+              font-size: 7.5px;
+              font-weight: 700;
+              padding: 1px 3px;
+              border-radius: 3px;
+              text-transform: uppercase;
+            }
+            .tag-purple { background: #f3e8ff; color: #7e22ce; }
+            .tag-amber { background: #fef3c7; color: #b45309; }
+            .tag-orange { background: #ffedd5; color: #c2410c; }
+            .tag-blue { background: #dbeafe; color: #1d4ed8; }
+            .status-badge {
+              display: inline-block;
+              color: #ffffff;
+              font-size: 8px;
+              font-weight: 700;
+              padding: 2px 5px;
+              border-radius: 3px;
+              text-transform: uppercase;
+              letter-spacing: 0.3px;
+            }
+            tfoot tr {
+              background: #f1f5f9 !important;
+              font-weight: 800;
+              border-top: 2px solid #94a3b8;
+            }
+            tfoot td {
+              padding: 6px;
+            }
+            .footer {
+              margin-top: 15px;
+              display: flex;
+              justify-content: space-between;
+              align-items: center;
+              font-size: 8.5px;
+              color: #94a3b8;
+              border-top: 1px solid #e2e8f0;
+              padding-top: 6px;
+            }
+            @media print {
+              body { padding: 0; }
+              .no-print { display: none; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <div class="header-left">
+              ${agencyLogo ? `<img src="${agencyLogo}" class="logo" alt="Logo" />` : ''}
+              <div>
+                <h1 class="title">${groupe?.nom || 'GROUPE OMRA'}</h1>
+                <div class="subtitle">Hôtel : <b>${currentHotelName}</b> &bull; Compagnie : <b>${groupe?.compagnie || '—'}</b></div>
+              </div>
+            </div>
+            <div class="meta">
+              <div><b>Départ :</b> ${groupe?.date_depart || '—'} &bull; <b>Retour :</b> ${groupe?.date_retour || '—'}</div>
+              <div><b>Agence :</b> ${agencyName} ${agencyPhone ? `(${agencyPhone})` : ''}</div>
+              <div><b>Document émis le :</b> ${exportDate}</div>
+            </div>
+          </div>
+
+          <div class="kpis">
+            <div class="kpi-card">
+              <div class="kpi-label">Pèlerins Inscrits</div>
+              <div class="kpi-value" style="color: #0f172a;">${totalPaxCount} <span style="font-size: 9px; font-weight: normal; color: #64748b;">/ ${groupe?.nbr_places || 0} places</span></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Total Dû</div>
+              <div class="kpi-value" style="color: #1d4ed8;">${fmtDZD(totalDuSum)} <span style="font-size: 9px; font-weight: normal;">DZD</span></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Total Encaissé</div>
+              <div class="kpi-value" style="color: #059669;">${fmtDZD(totalPayeSum)} <span style="font-size: 9px; font-weight: normal;">DZD</span></div>
+            </div>
+            <div class="kpi-card">
+              <div class="kpi-label">Reste à Recouvrer</div>
+              <div class="kpi-value" style="color: #dc2626;">${fmtDZD(totalResteSum)} <span style="font-size: 9px; font-weight: normal;">DZD</span></div>
+            </div>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 11%;">Chambre</th>
+                <th style="width: 21%;">Nom du Pèlerin</th>
+                <th style="width: 4%; text-align: center;">Genre</th>
+                <th style="width: 8%; text-align: right;">Tarif Lit</th>
+                <th style="width: 8%; text-align: right; color: #ea580c;">Tarif Restau</th>
+                <th style="width: 8%; text-align: right;">Réduction</th>
+                <th style="width: 8%; text-align: right;">Commission</th>
+                <th style="width: 10%; text-align: right;">Total Dû</th>
+                <th style="width: 10%; text-align: right;">Total Payé</th>
+                <th style="width: 10%; text-align: right;">Reste</th>
+                <th style="width: 8%; text-align: center;">Etat</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows || '<tr><td colspan="11" style="text-align: center; padding: 15px; color: #64748b;">Aucun enregistrement pour cet hôtel.</td></tr>'}
+            </tbody>
+            ${totalPaxCount > 0 ? `
+            <tfoot>
+              <tr>
+                <td colspan="3" style="text-align: right; text-transform: uppercase;">TOTAUX GÉNÉRAUX (${totalPaxCount} pèlerins) :</td>
+                <td style="text-align: right;">${fmtDZD(totalTarifLitSum)}</td>
+                <td style="text-align: right; color: #ea580c;">${fmtDZD(totalRestoSum)}</td>
+                <td style="text-align: right; color: #d97706;">-${fmtDZD(totalReductionSum)}</td>
+                <td style="text-align: right; color: #6b7280;">${fmtDZD(totalCommissionSum)}</td>
+                <td style="text-align: right; color: #1d4ed8; background-color: #dbeafe;">${fmtDZD(totalDuSum)}</td>
+                <td style="text-align: right; color: #059669; background-color: #dcfce7;">${fmtDZD(totalPayeSum)}</td>
+                <td style="text-align: right; color: #dc2626; background-color: #fee2e2;">${fmtDZD(totalResteSum)}</td>
+                <td></td>
+              </tr>
+            </tfoot>
+            ` : ''}
+          </table>
+
+          <div class="footer">
+            <div>${agencyName} &bull; Système de gestion Omra & Voyages</div>
+            <div>Page 1 &bull; Imprimé le ${exportDate}</div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              setTimeout(function() {
+                window.print();
+              }, 300);
+            };
+          </script>
+        </body>
+      </html>
+    `;
+
+    const printWindow = window.open('', '_blank', 'height=850,width=1200');
+    if (!printWindow) {
+      alert("Veuillez autoriser les fenêtres surgissantes (popups) pour imprimer le PDF.");
+      return;
+    }
+    printWindow.document.write(htmlContent);
+    printWindow.document.close();
+  };
 
   // Tabs structure
   const tabs = [
@@ -1222,12 +1880,14 @@ const OmraGroupDetails = () => {
                                 <CreditCard size={14} className="mr-1.5" /> Payer
                               </Button>
                               <div className="flex gap-2">
-                                <Button variant="outline" size="icon-sm" className="flex-1 h-8 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100" onClick={() => handleEdit(enr)}>
+                                <Button variant="outline" size="icon-sm" className={cn("h-8 bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100", isAdmin ? "flex-1" : "w-full")} onClick={() => handleEdit(enr)} title="Modifier">
                                   <Pencil size={14} />
                                 </Button>
-                                <Button variant="outline" size="icon-sm" className="flex-1 h-8 text-destructive border-red-100 hover:bg-destructive/10" onClick={() => handleDelete(enr.id)}>
-                                  <Trash2 size={14} />
-                                </Button>
+                                {isAdmin && (
+                                  <Button variant="outline" size="icon-sm" className="flex-1 h-8 text-destructive border-red-100 hover:bg-destructive/10" onClick={() => handleDelete(enr.id)} title="Supprimer">
+                                    <Trash2 size={14} />
+                                  </Button>
+                                )}
                               </div>
                             </div>
                           </td>
@@ -1244,25 +1904,35 @@ const OmraGroupDetails = () => {
         {/* ── Tab Content: Vue Liste ── */}
         {activeTab === 'vueliste' && (
           <div className="space-y-4">
-            {groupe.hotels && groupe.hotels.length > 0 && (
-              <div className="flex items-center gap-2 overflow-x-auto pb-2">
-                {groupe.hotels.map((h, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => setActiveListHotelId(h.hotelId)}
-                    className={cn(
-                      "px-4 py-2 rounded-full text-sm font-semibold transition-all whitespace-nowrap",
-                      (activeListHotelId === h.hotelId || (!activeListHotelId && idx === 0))
-                        ? "bg-primary text-primary-foreground shadow-md"
-                        : "bg-white text-gray-600 hover:bg-gray-100 border border-gray-200"
-                    )}
-                  >
-                    <Building2 size={14} className="inline-block mr-1.5" />
-                    {getHotelName(h.hotelId)}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div className="flex items-center justify-between gap-4 flex-wrap bg-white p-3 rounded-xl border shadow-sm">
+              {groupe.hotels && groupe.hotels.length > 0 ? (
+                <div className="flex items-center gap-2 overflow-x-auto">
+                  {groupe.hotels.map((h, idx) => (
+                    <button
+                      key={idx}
+                      onClick={() => setActiveListHotelId(h.hotelId)}
+                      className={cn(
+                        "px-4 py-2 rounded-full text-sm font-semibold transition-all whitespace-nowrap",
+                        (activeListHotelId === h.hotelId || (!activeListHotelId && idx === 0))
+                          ? "bg-primary text-primary-foreground shadow-md"
+                          : "bg-muted/40 text-gray-600 hover:bg-muted border border-gray-200"
+                      )}
+                    >
+                      <Building2 size={14} className="inline-block mr-1.5" />
+                      {getHotelName(h.hotelId)}
+                    </button>
+                  ))}
+                </div>
+              ) : <div />}
+
+              <Button
+                onClick={handlePrintVueListe}
+                className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold shadow-sm gap-2"
+              >
+                <Printer size={16} />
+                Imprimer / Exporter PDF
+              </Button>
+            </div>
             
             <Card className="overflow-hidden border-0 shadow-lg ring-1 ring-black/5 bg-white">
               <div className="overflow-x-auto">
@@ -1273,6 +1943,7 @@ const OmraGroupDetails = () => {
                       <th className="px-4 py-3 border border-gray-200">Nom</th>
                       <th className="px-4 py-3 border border-gray-200 text-center">Genre</th>
                       <th className="px-4 py-3 border border-gray-200 text-right">Tarif Lit</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right text-orange-600">Tarif Restau</th>
                       <th className="px-4 py-3 border border-gray-200 text-right">Réduction</th>
                       <th className="px-4 py-3 border border-gray-200 text-right">Commission</th>
                       <th className="px-4 py-3 border border-gray-200 text-right text-blue-700">Total Dû</th>
@@ -1289,7 +1960,7 @@ const OmraGroupDetails = () => {
                       if (hotelEnregistrements.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={10} className="px-4 py-8 text-center text-gray-500">Aucun enregistrement pour cet hôtel.</td>
+                            <td colSpan={11} className="px-4 py-8 text-center text-gray-500">Aucun enregistrement pour cet hôtel.</td>
                           </tr>
                         );
                       }
@@ -1303,10 +1974,11 @@ const OmraGroupDetails = () => {
                         ...(enr.enfantsSansLit || []).map(enf => ({ ...enf, tarifPerso: enf.tarif, chd: true, isEnfantSansLit: true }))
                       ];
                       
-                      const passagersPayants = tousPelerins.filter(p => !p.guide);
-                      const reductionPartagee = Number(enr.reduction || 0) / (passagersPayants.length || 1);
+                      const passagersAdultes = tousPelerins.filter(p => !p.guide && !p.chd && !p.isEnfantSansLit);
+                      const reductionPartagee = passagersAdultes.length > 0 ? Number(enr.reduction || 0) / passagersAdultes.length : 0;
                       
                       return tousPelerins.map((pelerin, index) => {
+                        const isAdult = !pelerin.guide && !pelerin.chd && !pelerin.isEnfantSansLit;
                         const tarifLit = pelerin.guide 
                           ? 0 
                           : (pelerin.isEnfantSansLit 
@@ -1314,7 +1986,7 @@ const OmraGroupDetails = () => {
                               : (pelerin.tarifPerso ? Number(pelerin.tarifPerso) : (Number(enrHotelConfig?.[CHAMBRE_KEYS[enr.typeChambre]]) || 0)));
                         
                         let reduction = (pelerin.guide || !pelerin.chd || pelerin.isEnfantSansLit) ? 0 : (Number(enrHotelConfig?.reductionChd) || 0);
-                        if (!pelerin.guide) reduction += reductionPartagee;
+                        if (isAdult) reduction += reductionPartagee;
                         
                         let extraCosts = 0;
                         if (pelerin.restauration && !pelerin.guide && !pelerin.isEnfantSansLit) extraCosts += Number(enrHotelConfig?.restauration || 0);
@@ -1372,6 +2044,7 @@ const OmraGroupDetails = () => {
                             </td>
                             <td className="px-4 py-2 border border-gray-200 text-center">{pelerin.sexe || 'H'}</td>
                             <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(tarifLit)}</td>
+                            <td className="px-4 py-2 border border-gray-200 text-right text-orange-600 font-medium">{fmtDZD(extraCosts)}</td>
                             <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(reduction)}</td>
                             <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(commission)}</td>
                             <td className="px-4 py-2 border border-gray-200 text-right font-bold text-blue-700 bg-blue-50/30">{fmtDZD(totalDu)}</td>
@@ -1754,9 +2427,11 @@ const OmraGroupDetails = () => {
                           {p.montantDZD.toLocaleString('fr-DZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </td>
                         <td className="px-3 py-4">
-                          <Button variant="ghost" size="icon-sm" className="opacity-0 group-hover/row:opacity-100 transition-opacity text-destructive hover:bg-destructive/10" onClick={() => handleDeletePayment(p.id)}>
-                            <Trash2 size={14} />
-                          </Button>
+                          {isAdmin && (
+                            <Button variant="ghost" size="icon-sm" className="opacity-0 group-hover/row:opacity-100 transition-opacity text-destructive hover:bg-destructive/10" onClick={() => handleDeletePayment(p.id)} title="Supprimer le paiement">
+                              <Trash2 size={14} />
+                            </Button>
+                          )}
                         </td>
                       </tr>
                     ))
@@ -1830,9 +2505,11 @@ const OmraGroupDetails = () => {
                                     </div>
                                     <div className="flex items-center gap-4">
                                       <span className="font-bold text-emerald-600">{fmtDZD(p.montant)} DZD</span>
-                                      <button onClick={() => handleDeleteCommissionPayment(p.id)} className="text-red-400 hover:text-red-600" title="Supprimer ce paiement">
-                                        <Trash2 size={12} />
-                                      </button>
+                                      {isAdmin && (
+                                        <button onClick={() => handleDeleteCommissionPayment(p.id)} className="text-red-400 hover:text-red-600" title="Supprimer ce paiement">
+                                          <Trash2 size={12} />
+                                        </button>
+                                      )}
                                     </div>
                                   </div>
                                 ))}
@@ -2024,17 +2701,57 @@ const OmraGroupDetails = () => {
                 {/* Lien Client (Facultatif) */}
                 <div className="space-y-1.5 pt-2 relative" ref={wrapperRef}>
                   <Label>Lier à un client (Facultatif)</Label>
-                  <div className="relative">
-                    <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      className="pl-9 h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
-                      placeholder="Rechercher un client..."
-                      value={clientSearch}
-                      onChange={e => { setClientSearch(e.target.value); setShowDropdown(true); if (formData.clientId) setFormData(prev => ({ ...prev, clientId: '' })); }}
-                      onFocus={() => setShowDropdown(true)}
-                    />
-                  </div>
-                  {showDropdown && (
+                  
+                  {formData.clientId ? (
+                    (() => {
+                      const selectedClient = clients.find(c => c.id === formData.clientId);
+                      return (
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 shadow-sm animate-in fade-in duration-150">
+                          <div className="flex items-center gap-3">
+                            <div className="w-8 h-8 rounded-lg bg-emerald-600 text-white flex items-center justify-center font-bold">
+                              <UserCheck size={16} />
+                            </div>
+                            <div>
+                              <div className="font-bold text-sm flex items-center gap-2">
+                                <span>{selectedClient?.nom || clientSearch}</span>
+                                <span className="text-[10px] bg-emerald-200/80 text-emerald-800 font-bold px-2 py-0.5 rounded-full uppercase">
+                                  {selectedClient?.type || 'Client'}
+                                </span>
+                              </div>
+                              <div className="text-[11px] text-emerald-700 font-medium mt-0.5">
+                                {selectedClient?.telephone ? `Tél : ${selectedClient.telephone}` : 'Sans numéro'} &bull; <span className="italic">Tout l'enregistrement et ses pèlerins sont rattachés à ce client</span>
+                              </div>
+                            </div>
+                          </div>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => {
+                              setFormData(prev => ({ ...prev, clientId: '' }));
+                              setClientSearch('');
+                            }}
+                            className="h-8 px-2.5 text-xs text-rose-600 hover:text-rose-700 hover:bg-rose-50"
+                          >
+                            Changer / Détacher
+                          </Button>
+                        </div>
+                      );
+                    })()
+                  ) : (
+                    <div className="relative">
+                      <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+                      <Input
+                        className="pl-9 h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
+                        placeholder="Rechercher et lier un client existant..."
+                        value={clientSearch}
+                        onChange={e => { setClientSearch(e.target.value); setShowDropdown(true); }}
+                        onFocus={() => setShowDropdown(true)}
+                      />
+                    </div>
+                  )}
+
+                  {showDropdown && !formData.clientId && (
                     <div className="absolute top-full left-0 right-0 mt-1.5 bg-background border rounded-lg shadow-lg z-50 max-h-[220px] overflow-y-auto overflow-x-hidden">
                       {filteredClients.map(c => (
                         <div key={c.id} onClick={() => handleSelectClient(c)}
@@ -2110,6 +2827,26 @@ const OmraGroupDetails = () => {
                                 onChange={e => handlePelerinChange(idx, 'nom', e.target.value)}
                                 className="flex-1 min-w-[150px] h-9"
                               />
+
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleOpenPelerinModal('pelerin', idx)}
+                                className={cn(
+                                  "h-9 px-2.5 text-xs font-bold gap-1.5 shrink-0 transition-colors",
+                                  (p.num_passeport || p.pelerin_id) 
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100" 
+                                    : "text-slate-600 bg-slate-50 border-slate-200 hover:bg-slate-100"
+                                )}
+                                title="Ouvrir la fiche d'informations du pèlerin (Passeport, photo, date de naissance...)"
+                              >
+                                <FolderOpen size={14} className={p.num_passeport ? "text-emerald-600" : "text-slate-500"} />
+                                <span>Ouvrir</span>
+                                {p.num_passeport && (
+                                  <span className="w-2 h-2 rounded-full bg-emerald-500" title={`Passeport: ${p.num_passeport}`}></span>
+                                )}
+                              </Button>
                               
                               <div className="flex items-center gap-2 shrink-0">
                                 <div className="flex bg-muted/50 border rounded-md p-0.5 shrink-0">
@@ -2224,6 +2961,22 @@ const OmraGroupDetails = () => {
                                 value={enfant.nom}
                                 onChange={e => handleEnfantSansLitChange(idx, 'nom', e.target.value)}
                               />
+                              <Button
+                                type="button"
+                                variant="outline"
+                                size="sm"
+                                onClick={() => handleOpenPelerinModal('enfant', idx)}
+                                className={cn(
+                                  "h-8 px-2 text-xs font-bold gap-1 shrink-0 transition-colors",
+                                  (enfant.num_passeport || enfant.pelerin_id) 
+                                    ? "bg-emerald-50 text-emerald-700 border-emerald-300 hover:bg-emerald-100" 
+                                    : "text-slate-600 bg-slate-50 border-slate-200 hover:bg-slate-100"
+                                )}
+                                title="Ouvrir la fiche d'informations de l'enfant (Passeport, date de naissance...)"
+                              >
+                                <FolderOpen size={13} className={enfant.num_passeport ? "text-emerald-600" : "text-slate-500"} />
+                                <span>Ouvrir</span>
+                              </Button>
                               <Input 
                                 type="number" 
                                 placeholder="Tarif (DZD)" 
@@ -2553,6 +3306,232 @@ const OmraGroupDetails = () => {
         </Dialog>
 
       </div>
+
+      {/* ── Modal Fiche Pèlerin (Sous-modale depuis formulaire d'enregistrement) ── */}
+      <Dialog open={isPelerinDetailModalOpen} onOpenChange={setIsPelerinDetailModalOpen}>
+        <DialogContent className="max-w-2xl p-0 overflow-hidden" onClose={() => setIsPelerinDetailModalOpen(false)}>
+          <div className="bg-gradient-to-r from-emerald-100/60 via-emerald-50/30 to-transparent px-6 py-4 border-b flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold shadow-sm">
+                <UserCheck size={20} />
+              </div>
+              <div>
+                <DialogTitle className="text-lg font-extrabold text-foreground">
+                  Fiche d'Identité du Pèlerin
+                </DialogTitle>
+                <DialogDescription className="text-xs">
+                  Saisissez ou modifiez les informations détaillées (passeport, photo, naissance).
+                </DialogDescription>
+              </div>
+            </div>
+          </div>
+
+          <form onSubmit={handleSavePelerinModalDetails} className="p-6 space-y-5 max-h-[80vh] overflow-y-auto custom-scrollbar">
+            {/* Suggestion / Recherche Pèlerin Existant */}
+            {pelerinsMaster.length > 0 && (
+              <div className="p-3 bg-emerald-50/60 border border-emerald-200/80 rounded-xl">
+                <Label className="text-[11px] font-bold text-emerald-900 block mb-1">
+                  Rechercher / Sélectionner un pèlerin existant (Autocomplétion)
+                </Label>
+                <Select
+                  value=""
+                  onChange={(e) => handleSelectMasterPelerin(e.target.value)}
+                  className="h-9 text-xs bg-white border-emerald-300"
+                >
+                  <option value="">Sélectionner pour remplir automatiquement...</option>
+                  {pelerinsMaster.map(pel => (
+                    <option key={pel.id} value={pel.id}>
+                      {pel.nom} {pel.prenom || ''} {pel.num_passeport ? `(Pass: ${pel.num_passeport})` : ''} - {pel.telephone || 'Sans tél'}
+                    </option>
+                  ))}
+                </Select>
+              </div>
+            )}
+
+            {/* Photo & Basic Row */}
+            <div className="flex flex-col sm:flex-row items-center gap-5 p-4 rounded-xl bg-muted/20 border">
+              <div className="relative group shrink-0">
+                {pelerinDetailFormData.photo_url ? (
+                  <img 
+                    src={pelerinDetailFormData.photo_url} 
+                    alt="Pèlerin" 
+                    className="w-24 h-24 rounded-2xl object-cover border-2 border-emerald-500 shadow-md"
+                  />
+                ) : (
+                  <div className="w-24 h-24 rounded-2xl bg-muted border border-border flex flex-col items-center justify-center text-muted-foreground gap-1 shadow-inner">
+                    <Camera size={24} />
+                    <span className="text-[10px] font-medium">Photo</span>
+                  </div>
+                )}
+                <label className="absolute inset-0 bg-black/40 rounded-2xl opacity-0 group-hover:opacity-100 transition-opacity flex flex-col items-center justify-center text-white cursor-pointer gap-1">
+                  <Upload size={18} />
+                  <span className="text-[10px] font-bold">Changer</span>
+                  <input 
+                    type="file" 
+                    accept="image/*" 
+                    onChange={handleUploadPelerinPhoto} 
+                    className="hidden" 
+                    disabled={uploadingPelerinPhoto}
+                  />
+                </label>
+                {uploadingPelerinPhoto && (
+                  <div className="absolute inset-0 bg-white/80 rounded-2xl flex items-center justify-center">
+                    <RefreshCw size={20} className="animate-spin text-emerald-600" />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex-1 w-full space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs font-bold">Nom de Famille <span className="text-red-500">*</span></Label>
+                    <Input
+                      required
+                      value={pelerinDetailFormData.nom}
+                      onChange={e => setPelerinDetailFormData(p => ({ ...p, nom: e.target.value }))}
+                      placeholder="Nom"
+                      className="h-9 text-xs mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-xs font-bold">Prénom(s)</Label>
+                    <Input
+                      value={pelerinDetailFormData.prenom}
+                      onChange={e => setPelerinDetailFormData(p => ({ ...p, prenom: e.target.value }))}
+                      placeholder="Prénom"
+                      className="h-9 text-xs mt-1"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-xs font-bold">Genre</Label>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={pelerinDetailFormData.sexe === 'H' ? 'default' : 'outline'}
+                        onClick={() => setPelerinDetailFormData(p => ({ ...p, sexe: 'H' }))}
+                        className={cn("h-8 flex-1 text-xs font-bold", pelerinDetailFormData.sexe === 'H' && "bg-blue-600 hover:bg-blue-700 text-white")}
+                      >
+                        Homme (H)
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={pelerinDetailFormData.sexe === 'F' ? 'default' : 'outline'}
+                        onClick={() => setPelerinDetailFormData(p => ({ ...p, sexe: 'F' }))}
+                        className={cn("h-8 flex-1 text-xs font-bold", pelerinDetailFormData.sexe === 'F' && "bg-pink-600 hover:bg-pink-700 text-white")}
+                      >
+                        Femme (F)
+                      </Button>
+                    </div>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs font-bold">Téléphone</Label>
+                    <Input
+                      value={pelerinDetailFormData.telephone}
+                      onChange={e => setPelerinDetailFormData(p => ({ ...p, telephone: e.target.value }))}
+                      placeholder="05 / 06 / 07..."
+                      className="h-9 text-xs mt-1"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Passport & Dates */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div>
+                <Label className="text-xs font-bold">N° de Passeport</Label>
+                <Input
+                  value={pelerinDetailFormData.num_passeport}
+                  onChange={e => setPelerinDetailFormData(p => ({ ...p, num_passeport: e.target.value }))}
+                  placeholder="Ex: 219874563"
+                  className="h-9 text-xs font-mono mt-1"
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold">Date d'Expiration Passeport</Label>
+                <Input
+                  type="date"
+                  value={pelerinDetailFormData.date_expiration_passeport}
+                  onChange={e => setPelerinDetailFormData(p => ({ ...p, date_expiration_passeport: e.target.value }))}
+                  className="h-9 text-xs mt-1"
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold">Date de Naissance</Label>
+                <Input
+                  type="date"
+                  value={pelerinDetailFormData.date_naissance}
+                  onChange={e => setPelerinDetailFormData(p => ({ ...p, date_naissance: e.target.value }))}
+                  className="h-9 text-xs mt-1"
+                />
+              </div>
+            </div>
+
+            {/* Nationality & Visa */}
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <Label className="text-xs font-bold">Nationalité</Label>
+                <Input
+                  value={pelerinDetailFormData.nationalite}
+                  onChange={e => setPelerinDetailFormData(p => ({ ...p, nationalite: e.target.value }))}
+                  placeholder="Algérienne"
+                  className="h-9 text-xs mt-1"
+                />
+              </div>
+
+              <div>
+                <Label className="text-xs font-bold">N° de Visa (Nusuk / Omra)</Label>
+                <Input
+                  value={pelerinDetailFormData.num_visa}
+                  onChange={e => setPelerinDetailFormData(p => ({ ...p, num_visa: e.target.value }))}
+                  placeholder="Optionnel"
+                  className="h-9 text-xs font-mono mt-1"
+                />
+              </div>
+            </div>
+
+            {/* Notes */}
+            <div>
+              <Label className="text-xs font-bold">Notes & Remarques</Label>
+              <textarea
+                rows={2}
+                value={pelerinDetailFormData.notes}
+                onChange={e => setPelerinDetailFormData(p => ({ ...p, notes: e.target.value }))}
+                placeholder="Besoins spécifiques, régime, fauteuil roulant..."
+                className="w-full mt-1 p-2.5 rounded-lg border border-input text-xs focus:ring-2 focus:ring-emerald-500 focus:outline-none bg-background"
+              />
+            </div>
+
+            {/* Submodal Actions */}
+            <div className="flex items-center justify-end gap-3 pt-3 border-t">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setIsPelerinDetailModalOpen(false)}
+                className="h-9 text-xs"
+              >
+                Annuler
+              </Button>
+              <Button
+                type="submit"
+                className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 shadow-sm"
+              >
+                <Check size={14} />
+                Valider les informations
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
+
       <Dialog open={isAddingClient} onOpenChange={setIsAddingClient}>
         <DialogContent className="max-w-3xl p-0" onClose={() => setIsAddingClient(false)}>
           <ClientForm 

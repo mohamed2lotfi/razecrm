@@ -236,9 +236,17 @@ const OmraGroupForm = ({ onCancel, onSave, group }) => {
                           >
                             <option value="">Sélectionnez un hôtel</option>
                             {hotelsMaster.map((h, i) => {
-                              const label = `${h.nom ? h.nom + ' - ' : ''}${h.location.toUpperCase()} - ${h.nbrEtoiles} Étoiles`;
-                              return <option key={i} value={label}>{label}</option>;
+                              const etoiles = h.nbr_etoiles || h.nbrEtoiles || '4';
+                              const loc = h.location === 'mecca' ? 'La Mecque' : h.location === 'medina' ? 'Médine' : (h.location ? h.location.toUpperCase() : '');
+                              const label = `${h.nom ? h.nom : 'Hôtel'}${loc ? ' (' + loc + ')' : ''} - ${etoiles} Étoiles ★`;
+                              return <option key={h.id || i} value={h.id}>{label}</option>;
                             })}
+                            {/* Support pour les anciens enregistrements avec libellé textuel */}
+                            {hotel.hotelId && !hotelsMaster.some(h => h.id === hotel.hotelId) && (
+                              <option value={hotel.hotelId}>
+                                {hotel.hotelId.replace(/undefined\s*étoiles/gi, '').trim() || hotel.hotelId}
+                              </option>
+                            )}
                           </Select>
                         </div>
 

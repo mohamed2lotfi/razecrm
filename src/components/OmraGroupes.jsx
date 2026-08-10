@@ -27,11 +27,12 @@ const OmraGroupes = () => {
       const mappedGroups = gRes.data.map(g => ({
         ...g,
         hotels: (g.hotels || []).map(h => {
-          const matchedHotel = hotelsMaster.find(m => m.id === h.hotelId);
+          const matchedHotel = hotelsMaster.find(m => m.id === h.hotelId || m.nom === h.hotelId || (typeof h.hotelId === 'string' && h.hotelId.startsWith(m.nom)));
+          const cleanLoc = (h.location || h.hotelId || 'Hôtel Inconnu').replace(/undefined\s*étoiles/gi, '').trim();
           return {
             ...h,
-            location: matchedHotel ? matchedHotel.nom : 'Hôtel Inconnu',
-            nbrEtoiles: matchedHotel ? matchedHotel.nbr_etoiles : ''
+            location: matchedHotel ? matchedHotel.nom : cleanLoc,
+            nbrEtoiles: matchedHotel ? (matchedHotel.nbr_etoiles || matchedHotel.nbrEtoiles || '4') : (h.nbrEtoiles || '4')
           };
         })
       }));
@@ -155,8 +156,8 @@ const OmraGroupes = () => {
                   </div>
                   <div className="flex flex-wrap gap-1">
                     {group.hotels?.map((h, i) => (
-                      <span key={i} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-bold uppercase">
-                        Hôtel {i + 1}
+                      <span key={i} className="text-[10px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2 py-0.5 rounded font-bold uppercase" title={h.location}>
+                        {h.location || `Hôtel ${i + 1}`} {h.nbrEtoiles ? `(${h.nbrEtoiles}★)` : ''}
                       </span>
                     ))}
                   </div>

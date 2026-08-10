@@ -11,6 +11,7 @@ import { Select } from '@/components/ui/select';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 const COLUMNS = [
   { id: 'nouvelle', title: 'Demande devis', color: 'bg-blue-500', light: 'bg-blue-50 border-blue-200 text-blue-700' },
@@ -250,7 +251,7 @@ const Pipeline = () => {
   return (
     <Layout>
       <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-extrabold tracking-tight">Pipeline Devis</h1>
+        <h1 className="text-2xl font-extrabold tracking-tight">Devis</h1>
         <div className="flex items-center gap-3">
           <div className="flex items-center bg-muted/50 rounded-lg p-1 border">
             <button onClick={() => setViewMode('kanban')} className={cn("px-3 py-1.5 text-sm font-semibold rounded-md flex items-center gap-2 transition-colors", viewMode === 'kanban' ? "bg-background shadow-sm text-foreground" : "text-muted-foreground hover:text-foreground")}>
@@ -393,9 +394,11 @@ const Pipeline = () => {
                         {task.date_creation ? new Date(task.date_creation).toLocaleDateString('fr-FR') : '-'}
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <Button variant="ghost" size="sm" onClick={(e) => handleDelete(e, task.id)} className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50">
-                          <Trash2 size={14} />
-                        </Button>
+                        {isAdmin && (
+                          <Button variant="ghost" size="sm" onClick={(e) => handleDelete(e, task.id)} className="h-8 w-8 p-0 text-red-500 hover:text-red-700 hover:bg-red-50" title="Supprimer le devis">
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
                       </td>
                     </tr>
                   );

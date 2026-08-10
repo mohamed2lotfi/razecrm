@@ -1,26 +1,58 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Users, Trash2, Loader2, Pencil } from 'lucide-react';
+import { Plus, Users, Trash2, Loader2, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { Input } from '@/components/ui/input';
 import ClientForm from '@/components/ClientForm';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 const Clients = () => {
+  const { isAdmin } = useAuth();
   const [clients, setClients] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(null);
 
+  // Pagination & Search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [totalCount, setTotalCount] = useState(0);
+  const ITEMS_PER_PAGE = 20;
+
+  // Debounce search
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setDebouncedSearch(searchQuery);
+      setCurrentPage(1); // Reset to first page on new search
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
   useEffect(() => {
     fetchClients();
-  }, []);
+  }, [currentPage, debouncedSearch]);
 
   const fetchClients = async () => {
     setLoading(true);
-    const { data, error } = await supabase.from('clients').select('*, ventes(id), pipeline(id)').order('created_at', { ascending: false });
+    let query = supabase.from('clients').select('*, ventes(id), pipeline(id)', { count: 'exact' });
+    
+    if (debouncedSearch) {
+      query = query.or(`nom.ilike.%${debouncedSearch}%,email.ilike.%${debouncedSearch}%,telephone.ilike.%${debouncedSearch}%`);
+    }
+
+    const from = (currentPage - 1) * ITEMS_PER_PAGE;
+    const to = from + ITEMS_PER_PAGE - 1;
+
+    const { data, error, count } = await query
+      .order('created_at', { ascending: false })
+      .range(from, to);
+
     if (!error && data) {
       setClients(data);
+      if (count !== null) setTotalCount(count);
     }
     setLoading(false);
   };
@@ -36,7 +68,8 @@ const Clients = () => {
     } else {
       const { data, error } = await supabase.from('clients').insert([newClientData]).select();
       if (!error && data) {
-        setClients([data[0], ...clients]);
+        // Optionnel : Forcer un rafraîchissement complet pour garder la pagination juste
+        fetchClients();
         setIsFormOpen(false);
       }
     }
@@ -45,7 +78,7 @@ const Clients = () => {
   const handleDelete = async (id) => {
     if (window.confirm('Supprimer ce client ?')) {
       await supabase.from('clients').delete().eq('id', id);
-      setClients(prev => prev.filter(c => c.id !== id));
+      fetchClients(); // Rafraîchir pour compenser la suppression
     }
   };
 
@@ -61,9 +94,22 @@ const Clients = () => {
 
   return (
     <Layout>
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
         <h1 className="text-2xl font-extrabold tracking-tight">Clients</h1>
-        <Button onClick={() => { setEditingClient(null); setIsFormOpen(true); }}><Plus size={16} /> Ajouter un client</Button>
+        <div className="flex items-center gap-3 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
+            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+            <Input 
+              placeholder="Rechercher un client..." 
+              className="pl-9 bg-white" 
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+          </div>
+          <Button onClick={() => { setEditingClient(null); setIsFormOpen(true); }} className="shrink-0">
+            <Plus size={16} className="mr-2 hidden sm:inline" /> Ajouter un client
+          </Button>
+        </div>
       </div>
 
       <div className="rounded-xl border bg-card shadow-sm overflow-hidden">
@@ -82,17 +128,17 @@ const Clients = () => {
             <tbody>
               {loading ? (
                 <tr>
-                  <td colSpan="5" className="py-16 text-center">
+                  <td colSpan="6" className="py-16 text-center">
                     <Loader2 size={32} className="mx-auto animate-spin text-primary mb-3" />
                     <p className="font-medium text-muted-foreground">Chargement des clients...</p>
                   </td>
                 </tr>
               ) : clients.length === 0 ? (
                 <tr>
-                  <td colSpan="5" className="py-16 text-center">
+                  <td colSpan="6" className="py-16 text-center">
                     <Users size={40} className="mx-auto text-muted-foreground/30 mb-3" />
                     <p className="font-medium text-muted-foreground">Aucun client trouvé</p>
-                    <p className="text-xs text-muted-foreground mt-1">Cliquez sur "Ajouter un client" pour commencer.</p>
+                    {debouncedSearch && <p className="text-xs text-muted-foreground mt-1">Essayez un autre mot-clé.</p>}
                   </td>
                 </tr>
               ) : clients.map(c => (
@@ -120,9 +166,11 @@ const Clients = () => {
                       <Button variant="outline" size="sm" onClick={() => { setEditingClient(c); setIsFormOpen(true); }}>
                         <Pencil size={14} /> Modifier
                       </Button>
-                      <Button variant="destructive" size="sm" onClick={() => handleDelete(c.id)}>
-                        <Trash2 size={14} /> Supprimer
-                      </Button>
+                      {isAdmin && (
+                        <Button variant="destructive" size="sm" onClick={() => handleDelete(c.id)}>
+                          <Trash2 size={14} /> Supprimer
+                        </Button>
+                      )}
                     </div>
                   </td>
                 </tr>
@@ -131,6 +179,33 @@ const Clients = () => {
           </table>
         </div>
       </div>
+
+      {/* Pagination Controls */}
+      {!loading && totalCount > ITEMS_PER_PAGE && (
+        <div className="flex flex-col sm:flex-row items-center justify-between mt-4 gap-4 bg-white/50 p-3 rounded-xl border border-primary/10">
+          <span className="text-sm text-slate-600 font-medium">
+            Affichage de <span className="font-extrabold text-primary">{clients.length > 0 ? (currentPage - 1) * ITEMS_PER_PAGE + 1 : 0}</span> à <span className="font-extrabold text-primary">{Math.min(currentPage * ITEMS_PER_PAGE, totalCount)}</span> sur <span className="font-extrabold text-primary">{totalCount}</span> clients
+          </span>
+          <div className="flex items-center gap-2">
+            <Button 
+              variant="outline" 
+              size="sm" 
+              disabled={currentPage === 1}
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+            >
+              <ChevronLeft size={16} className="mr-1" /> Précédent
+            </Button>
+            <Button 
+              variant="outline" 
+              size="sm" 
+              disabled={currentPage * ITEMS_PER_PAGE >= totalCount}
+              onClick={() => setCurrentPage(prev => prev + 1)}
+            >
+              Suivant <ChevronRight size={16} className="ml-1" />
+            </Button>
+          </div>
+        </div>
+      )}
 
       {isFormOpen && <ClientForm onClose={() => { setIsFormOpen(false); setEditingClient(null); }} onSave={handleSave} initialData={editingClient} />}
     </Layout>

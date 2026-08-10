@@ -14,6 +14,19 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
   const [servicesList, setServicesList] = useState([]);
   const [fournisseursList, setFournisseursList] = useState([]);
   const [loadingData, setLoadingData] = useState(true);
+
+  // Visa catalogue data
+  const [visaCountries, setVisaCountries] = useState([]);
+  const [visaTypes, setVisaTypes] = useState([]);
+  const [selectedVisaCountryId, setSelectedVisaCountryId] = useState('');
+  const [selectedVisaTypeId, setSelectedVisaTypeId] = useState('');
+  const [selectedVisaType, setSelectedVisaType] = useState(null);
+  const [dossierChecks, setDossierChecks] = useState({});
+
+  // Airlines data
+  const [airlines, setAirlines] = useState([]);
+  const [selectedAirlineId, setSelectedAirlineId] = useState('');
+  const [selectedAirline, setSelectedAirline] = useState(null);
   
   const [formData, setFormData] = useState(() => {
     if (initialData) {
@@ -54,15 +67,66 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
 
   const fetchFormData = async () => {
     setLoadingData(true);
-    const [cRes, sRes, fRes] = await Promise.all([
+    const [cRes, sRes, fRes, vcRes, vtRes, aRes] = await Promise.all([
       supabase.from('clients').select('*').order('created_at', { ascending: false }),
       supabase.from('services').select('*').order('created_at'),
-      supabase.from('fournisseurs').select('*').order('created_at')
+      supabase.from('fournisseurs').select('*').order('created_at'),
+      supabase.from('visa_countries').select('*').order('nom'),
+      supabase.from('visa_types').select('*').order('nom'),
+      supabase.from('airlines').select('*').order('nom')
     ]);
     if (cRes.data) setClients(cRes.data);
     if (sRes.data) setServicesList(sRes.data);
     if (fRes.data) setFournisseursList(fRes.data);
+    if (vcRes.data) setVisaCountries(vcRes.data);
+    if (vtRes.data) setVisaTypes(vtRes.data);
+    if (aRes.data) setAirlines(aRes.data);
     setLoadingData(false);
+  };
+
+  // Detect if selected service is "Visa" or "Billeterie"
+  const selectedServiceName = servicesList.find(s => s.id === formData.service_id)?.nom || '';
+  const isVisaService = selectedServiceName.toLowerCase().includes('visa');
+  const isBilleterieService = selectedServiceName.toLowerCase().includes('billet');
+
+  // Filter visa types by selected country
+  const filteredVisaTypes = visaTypes.filter(vt => vt.country_id === selectedVisaCountryId);
+
+  const handleVisaCountryChange = (countryId) => {
+    setSelectedVisaCountryId(countryId);
+    setSelectedVisaTypeId('');
+    setSelectedVisaType(null);
+  };
+
+  const handleVisaTypeChange = (typeId) => {
+    setSelectedVisaTypeId(typeId);
+    const vt = visaTypes.find(v => v.id === typeId);
+    setSelectedVisaType(vt || null);
+    if (vt) {
+      // Auto-fill tarif_base for main client, auto-calculate commission
+      const tarifVenteUnit = Number(vt.tarif_vente) || 0;
+      const tarifBaseUnit = Number(vt.tarif_base) || 0;
+      const updatedPersonnes = personnes.map(p => ({ ...p, tarif: tarifBaseUnit }));
+      setPersonnes(updatedPersonnes);
+      
+      // Reset dossier checks
+      const checks = {};
+      if (vt.dossier) vt.dossier.forEach(doc => { checks[doc] = false; });
+      setDossierChecks(checks);
+
+      setFormData(prev => {
+        const nbPassagers = (isEntreprise ? 0 : 1) + updatedPersonnes.length;
+        const totalVente = tarifVenteUnit * nbPassagers;
+        const totalAchat = tarifBaseUnit * nbPassagers;
+        const commission = totalVente - totalAchat;
+        return { 
+          ...prev, 
+          tarifClientPrincipal: tarifBaseUnit.toString(),
+          commission: commission.toString(), 
+          total: totalVente.toString() 
+        };
+      });
+    }
   };
 
   const selectedClient = clients.find(c => c.id === formData.client_id);
@@ -81,6 +145,15 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
       const currentIsEntreprise = currentClient?.type === 'Entreprise';
       const currentMainTarif = name === 'tarifClientPrincipal' ? value : prev.tarifClientPrincipal;
       const currentTarifBase = getCurrentTarifBase(currentMainTarif, personnes, currentIsEntreprise);
+
+      // Check if service changed to Billeterie or Visa, reset related states if needed
+      if (name === 'service_id') {
+        const newServiceName = servicesList.find(s => s.id === value)?.nom || '';
+        if (!newServiceName.toLowerCase().includes('billet')) {
+          setSelectedAirlineId('');
+          setSelectedAirline(null);
+        }
+      }
 
       if (name === 'tarifClientPrincipal' || name === 'commission' || name === 'client_id') {
         const comm = parseFloat(name === 'commission' ? value : prev.commission) || 0;
@@ -109,15 +182,41 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
     }
   };
 
-  const addPersonne = () => setPersonnes(prev => [...prev, { nom: '', tarif: '' }]);
+  const addPersonne = () => {
+    const newP = { nom: '', tarif: selectedVisaType ? (Number(selectedVisaType.tarif_base) || 0) : '' };
+    const updated = [...personnes, newP];
+    setPersonnes(updated);
+    if (isVisaService && selectedVisaType) {
+      recalcVisaTotals(updated);
+    }
+  };
   
   const removePersonne = (index) => {
     const updated = personnes.filter((_, i) => i !== index);
     setPersonnes(updated);
-    setFormData(prev => {
-      const tb = getCurrentTarifBase(prev.tarifClientPrincipal, updated, isEntreprise);
-      return { ...prev, total: (tb + (parseFloat(prev.commission) || 0)).toString() };
-    });
+    if (isVisaService && selectedVisaType) {
+      recalcVisaTotals(updated);
+    } else {
+      setFormData(prev => {
+        const tb = getCurrentTarifBase(prev.tarifClientPrincipal, updated, isEntreprise);
+        return { ...prev, total: (tb + (parseFloat(prev.commission) || 0)).toString() };
+      });
+    }
+  };
+
+  const recalcVisaTotals = (updatedPersonnes) => {
+    if (!selectedVisaType) return;
+    const tarifVenteUnit = Number(selectedVisaType.tarif_vente) || 0;
+    const tarifBaseUnit = Number(selectedVisaType.tarif_base) || 0;
+    const nbPassagers = (isEntreprise ? 0 : 1) + updatedPersonnes.length;
+    const totalVente = tarifVenteUnit * nbPassagers;
+    const totalAchat = tarifBaseUnit * nbPassagers;
+    const commission = totalVente - totalAchat;
+    setFormData(prev => ({
+      ...prev,
+      commission: commission.toString(),
+      total: totalVente.toString()
+    }));
   };
 
   const updatePersonne = (index, field, value) => {
@@ -133,16 +232,27 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
   const handleSubmit = (e) => {
     e.preventDefault();
     if (!formData.client_id) { alert('Veuillez sélectionner un client.'); return; }
+    if (isVisaService && (!selectedVisaCountryId || !selectedVisaTypeId)) {
+      alert('Veuillez sélectionner un pays et un type de visa.'); return;
+    }
+    if (isBilleterieService && !selectedAirlineId) {
+      alert('Veuillez sélectionner une compagnie aérienne.'); return;
+    }
     const tarifBase = getCurrentTarifBase(formData.tarifClientPrincipal, personnes, isEntreprise);
     
-    // We append the persons info to the "details" string or save them in a JSONB later if needed.
-    // Since the database expects 'details' TEXT, we can add it there for now, or just use the details field.
     let fullDetails = formData.details;
     if (personnes.length > 0) {
        fullDetails += ` | Passagers: ${personnes.map(p => p.nom).join(', ')}`;
     }
+    if (isVisaService && selectedVisaType) {
+      const countryName = visaCountries.find(c => c.id === selectedVisaCountryId)?.nom || '';
+      fullDetails = `Visa ${selectedVisaType.nom} — ${countryName}${fullDetails ? ' | ' + fullDetails : ''}`;
+    }
+    if (isBilleterieService && selectedAirline) {
+      fullDetails = `[Billet ${selectedAirline.code_iata} - ${selectedAirline.nom}]${fullDetails ? ' ' + fullDetails : ''}`;
+    }
 
-    onSave({
+    const saveData = {
       id: formData.id,
       date_vente: formData.date_vente,
       client_nom: selectedClient?.nom || initialData?.client_nom || 'Inconnu',
@@ -154,7 +264,25 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
       commission: parseFloat(formData.commission) || 0,
       total: parseFloat(formData.total) || 0,
       etat: formData.etat
-    });
+    };
+
+    // Attach visa metadata if applicable
+    if (isVisaService && selectedVisaType) {
+      saveData._visaMeta = {
+        country_id: selectedVisaCountryId,
+        visa_type_id: selectedVisaTypeId,
+        tarif_base_unit: Number(selectedVisaType.tarif_base) || 0,
+        tarif_vente_unit: Number(selectedVisaType.tarif_vente) || 0,
+        dossier: selectedVisaType.dossier || [],
+        dossierChecks: dossierChecks,
+        passagers: [
+          ...(isEntreprise ? [] : [{ nom: selectedClient?.nom || 'Client principal', tarif_vente: parseFloat(formData.tarifClientPrincipal) || 0 }]),
+          ...personnes.filter(p => p.nom.trim()).map(p => ({ nom: p.nom, tarif_vente: parseFloat(p.tarif) || 0 }))
+        ]
+      };
+    }
+
+    onSave(saveData);
   };
 
   const currentTarifBase = getCurrentTarifBase(formData.tarifClientPrincipal, personnes, isEntreprise);
@@ -240,6 +368,84 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
               </Select>
             </div>
           </div>
+
+          {/* Billeterie Conditional Fields */}
+          {isBilleterieService && (
+            <div className="rounded-xl border-2 border-blue-200 bg-blue-50/30 p-5 space-y-4">
+              <Label className="text-sm font-bold text-blue-800 flex items-center gap-2">✈️ Compagnie Aérienne</Label>
+              <div className="flex gap-4 items-end">
+                <div className="space-y-1.5 flex-1 max-w-sm">
+                  <Label className="text-xs font-semibold text-slate-600">Sélectionner la compagnie</Label>
+                  <Select 
+                    value={selectedAirlineId} 
+                    onChange={e => {
+                      setSelectedAirlineId(e.target.value);
+                      setSelectedAirline(airlines.find(a => a.id === e.target.value) || null);
+                    }} 
+                    className="h-10 bg-white border-blue-300"
+                  >
+                    <option value="">-- Choisir --</option>
+                    {airlines.map(a => <option key={a.id} value={a.id}>{a.code_iata} - {a.nom}</option>)}
+                  </Select>
+                </div>
+                {selectedAirline && (
+                  <div className="h-10 px-4 flex items-center bg-blue-100 border border-blue-200 rounded-md text-sm">
+                    <span className="font-semibold text-blue-800">
+                      Commission indicative : {Number(selectedAirline.commission || 0).toLocaleString('fr-DZ')} DZD
+                    </span>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Visa Conditional Fields */}
+          {isVisaService && (
+            <div className="rounded-xl border-2 border-emerald-200 bg-emerald-50/30 p-5 space-y-4">
+              <Label className="text-sm font-bold text-emerald-800 flex items-center gap-2">🌍 Catalogue Visa</Label>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-600">Pays</Label>
+                  <Select value={selectedVisaCountryId} onChange={e => handleVisaCountryChange(e.target.value)} className="h-10 bg-white border-emerald-300">
+                    <option value="">-- Sélectionner un pays --</option>
+                    {visaCountries.map(c => <option key={c.id} value={c.id}>{c.nom}</option>)}
+                  </Select>
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs font-semibold text-slate-600">Type de Visa</Label>
+                  <Select value={selectedVisaTypeId} onChange={e => handleVisaTypeChange(e.target.value)} className="h-10 bg-white border-emerald-300" disabled={!selectedVisaCountryId}>
+                    <option value="">-- Sélectionner --</option>
+                    {filteredVisaTypes.map(vt => <option key={vt.id} value={vt.id}>{vt.nom}</option>)}
+                  </Select>
+                </div>
+              </div>
+              {selectedVisaType && (
+                <div className="space-y-3 pt-2">
+                  <div className="flex gap-4 text-xs">
+                    <span className="bg-red-50 text-red-700 border border-red-200 px-2.5 py-1 rounded font-medium">Achat/px: {Number(selectedVisaType.tarif_base||0).toLocaleString('fr-DZ')} DZD</span>
+                    <span className="bg-emerald-100 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded font-bold">Vente/px: {Number(selectedVisaType.tarif_vente||0).toLocaleString('fr-DZ')} DZD</span>
+                    {selectedVisaType.duree_traitement && <span className="bg-slate-100 border px-2.5 py-1 rounded">⏱️ {selectedVisaType.duree_traitement}</span>}
+                  </div>
+                  {selectedVisaType.dossier && selectedVisaType.dossier.length > 0 && (
+                    <div>
+                      <Label className="text-xs font-semibold text-slate-500 mb-1.5 block">📋 Réception du dossier :</Label>
+                      <div className="space-y-1.5">
+                        {selectedVisaType.dossier.map((doc, i) => (
+                          <label key={i} className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-all ${
+                            dossierChecks[doc] ? 'bg-emerald-50 border-emerald-300' : 'bg-white border-slate-200 hover:bg-slate-50'
+                          }`}>
+                            <input type="checkbox" checked={!!dossierChecks[doc]} onChange={() => setDossierChecks(prev => ({...prev, [doc]: !prev[doc]}))} className="accent-emerald-600 w-4 h-4" />
+                            <span className={`text-sm ${dossierChecks[doc] ? 'text-emerald-800 line-through font-medium' : 'text-foreground'}`}>{doc}</span>
+                            {dossierChecks[doc] && <span className="text-[10px] text-emerald-600 ml-auto">✓ Reçu</span>}
+                          </label>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
 
           {/* Persons Section */}
           <div className="rounded-xl border border-primary/10 bg-primary/5 p-5 space-y-4 shadow-inner">
