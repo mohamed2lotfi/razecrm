@@ -508,6 +508,60 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
                         )}
                       </div>
                     );
+                  } else if (parsed.service_type === 'vols') {
+                    return (
+                      <div className="p-4 rounded-xl bg-blue-500/10 border border-blue-500/20 space-y-3">
+                        <div className="flex items-center justify-between">
+                          <span className="text-xs font-black uppercase tracking-wider text-blue-600 dark:text-blue-400 flex items-center gap-1.5">
+                            ✈️ Demande de Vol / Billetterie
+                          </span>
+                          <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-blue-500/15 text-blue-700 dark:text-blue-300">
+                            {parsed.trip_type === 'aller_retour' ? 'Aller-Retour' : 'Aller Simple'}
+                          </span>
+                        </div>
+
+                        <div className="text-xs space-y-1.5">
+                          <div className="font-bold text-sm text-foreground flex items-center gap-2">
+                            <span>{parsed.ville_depart}</span>
+                            <span>➔</span>
+                            <span>{parsed.ville_arrivee}</span>
+                          </div>
+
+                          <div className="text-muted-foreground flex flex-wrap gap-x-4 gap-y-1 pt-1">
+                            <div><strong>Départ :</strong> {parsed.date_aller || 'Non fixé'}</div>
+                            {parsed.trip_type === 'aller_retour' && (
+                              <div><strong>Retour :</strong> {parsed.date_retour || 'Non fixé'}</div>
+                            )}
+                            <div><strong>Classe :</strong> <span className="uppercase">{parsed.classe || 'Économique'}</span></div>
+                          </div>
+
+                          {parsed.passagers && (
+                            <div className="pt-2 border-t border-blue-500/10 flex flex-wrap items-center gap-2">
+                              <span className="text-[11px] font-bold text-muted-foreground">Passagers ({parsed.total_passagers || 1}) :</span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-background border">
+                                {parsed.passagers.adultes || 1} Adulte(s)
+                              </span>
+                              {parsed.passagers.enfants > 0 && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-background border">
+                                  {parsed.passagers.enfants} Enfant(s)
+                                </span>
+                              )}
+                              {parsed.passagers.bebes > 0 && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-background border">
+                                  {parsed.passagers.bebes} Bébé(s)
+                                </span>
+                              )}
+                            </div>
+                          )}
+
+                          {parsed.compagnie_pref && (
+                            <div className="text-[11px] text-muted-foreground">
+                              <strong>Compagnie souhaitée :</strong> {parsed.compagnie_pref}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    );
                   }
                 }
               } catch (e) {}

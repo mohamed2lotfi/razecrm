@@ -1,15 +1,45 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { supabase } from '@/lib/supabase';
 import { useClientAuth } from '@/contexts/ClientAuthContext';
 import { useLanguage } from '@/contexts/LanguageContext';
 import { 
   X, Sparkles, Send, CheckCircle2, Plane, Compass, 
   Stamp, Hotel, Palmtree, Users, Plus, Minus, Trash2, 
-  Train, Star, Loader2, Building2
+  Train, Star, Loader2, Building2, ArrowLeftRight, Calendar,
+  ChevronDown, Search, Check, MapPin
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-// Static default master data to ensure INSTANT rendering with 0 network delay
+// Master airport lists with rich details
+const DEPARTURE_AIRPORTS = [
+  { code: 'ALG', city: 'Alger', name: 'Aéroport Houari Boumédiène', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'ORN', city: 'Oran', name: 'Aéroport Ahmed Ben Bella', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'CZL', city: 'Constantine', name: 'Aéroport Mohamed Boudiaf', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'BJA', city: 'Béjaïa', name: 'Aéroport Abane Ramdane', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'AAE', city: 'Annaba', name: 'Aéroport Rabah Bitat', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'TLM', city: 'Tlemcen', name: 'Aéroport Zenata', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'QSF', city: 'Sétif', name: 'Aéroport 8 Mai 1945', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'BSK', city: 'Biskra', name: 'Aéroport Mohamed Khider', country: 'Algérie', flag: '🇩🇿' },
+  { code: 'GHA', city: 'Ghardaïa', name: 'Aéroport Noumérat - Moufdi Zakaria', country: 'Algérie', flag: '🇩🇿' },
+];
+
+const ARRIVAL_AIRPORTS = [
+  { code: 'IST', city: 'Istanbul', name: 'Aéroport d\'Istanbul (IST / SAW)', country: 'Turquie', flag: '🇹🇷' },
+  { code: 'PAR', city: 'Paris', name: 'Paris (CDG / Orly)', country: 'France', flag: '🇫🇷' },
+  { code: 'JED', city: 'Djeddah', name: 'King Abdulaziz Intl (JED)', country: 'Arabie Saoudite', flag: '🇸🇦' },
+  { code: 'MED', city: 'Médine', name: 'Prince Mohammad Bin Abdulaziz (MED)', country: 'Arabie Saoudite', flag: '🇸🇦' },
+  { code: 'DXB', city: 'Dubaï', name: 'Aéroport International de Dubaï (DXB)', country: 'Émirats Arabes Unis', flag: '🇦🇪' },
+  { code: 'DOH', city: 'Doha', name: 'Hamad International (DOH)', country: 'Qatar', flag: '🇶🇦' },
+  { code: 'KUL', city: 'Kuala Lumpur', name: 'Kuala Lumpur Intl (KUL)', country: 'Malaisie', flag: '🇲🇾' },
+  { code: 'TUN', city: 'Tunis', name: 'Tunis-Carthage (TUN)', country: 'Tunisie', flag: '🇹🇳' },
+  { code: 'CAI', city: 'Le Caire', name: 'Aéroport International du Caire (CAI)', country: 'Égypte', flag: '🇪🇬' },
+  { code: 'BCN', city: 'Barcelone', name: 'El Prat (BCN)', country: 'Espagne', flag: '🇪🇸' },
+  { code: 'MAD', city: 'Madrid', name: 'Adolfo Suárez Barajas (MAD)', country: 'Espagne', flag: '🇪🇸' },
+  { code: 'LON', city: 'Londres', name: 'Heathrow / Gatwick (LON)', country: 'Royaume-Uni', flag: '🇬🇧' },
+  { code: 'CMN', city: 'Casablanca', name: 'Mohammed V (CMN)', country: 'Maroc', flag: '🇲🇦' },
+];
+
+// Static default master data for Omra
 const DEFAULT_OMRA_GROUPS = [
   { 
     id: 'grp-1', 
@@ -45,6 +75,161 @@ let _cachedOmraGroups = null;
 let _cachedHotels = null;
 let _isFetchingMaster = false;
 
+// ── Searchable Dropdown Component for Airports ──────────────────────────────────────
+const SearchableAirportSelect = ({ label, value, onChange, airports, placeholder, isArabic }) => {
+  const [isOpen, setIsOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const dropdownRef = useRef(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  // Filter airports based on search query
+  const filteredAirports = useMemo(() => {
+    if (!searchQuery.trim()) return airports;
+    const q = searchQuery.toLowerCase();
+    return airports.filter(a => 
+      a.city.toLowerCase().includes(q) || 
+      a.code.toLowerCase().includes(q) || 
+      a.name.toLowerCase().includes(q) ||
+      a.country.toLowerCase().includes(q)
+    );
+  }, [airports, searchQuery]);
+
+  // Find currently selected airport object
+  const selectedAirport = useMemo(() => {
+    return airports.find(a => `${a.city} (${a.code})` === value || a.city === value || a.code === value);
+  }, [airports, value]);
+
+  const handleSelect = (airportStr) => {
+    onChange(airportStr);
+    setIsOpen(false);
+    setSearchQuery('');
+  };
+
+  return (
+    <div className="space-y-1.5 relative" ref={dropdownRef}>
+      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+        {label}
+      </label>
+
+      {/* Trigger Button */}
+      <button
+        type="button"
+        onClick={() => setIsOpen(!isOpen)}
+        className={cn(
+          "w-full h-12 px-3.5 rounded-2xl bg-white dark:bg-[#1c1c1c] border transition-all flex items-center justify-between gap-2 text-left rtl:text-right shadow-xs",
+          isOpen 
+            ? "border-brand-500 ring-2 ring-brand-500/20" 
+            : "border-slate-200 dark:border-white/10 hover:border-slate-300 dark:hover:border-white/20"
+        )}
+      >
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 rounded-xl bg-slate-100 dark:bg-white/10 flex items-center justify-center text-sm shrink-0">
+            {selectedAirport ? selectedAirport.flag : '✈️'}
+          </div>
+          <div className="truncate">
+            <div className="text-xs font-black text-slate-900 dark:text-white leading-tight truncate">
+              {value || placeholder}
+            </div>
+            {selectedAirport && (
+              <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                {selectedAirport.name}
+              </div>
+            )}
+          </div>
+        </div>
+        <ChevronDown size={15} className={cn("text-slate-400 transition-transform duration-200 shrink-0", isOpen && "rotate-180")} />
+      </button>
+
+      {/* Floating Dropdown List */}
+      {isOpen && (
+        <div className="absolute top-full left-0 right-0 mt-1.5 bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/15 rounded-2xl shadow-2xl z-50 overflow-hidden animate-fade-in text-slate-900 dark:text-white">
+          
+          {/* Search Box inside Dropdown */}
+          <div className="p-2 border-b border-slate-100 dark:border-white/10 relative">
+            <Search size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 rtl:left-auto rtl:right-4" />
+            <input
+              type="text"
+              autoFocus
+              placeholder={isArabic ? 'ابحث عن مدينة أو مطار...' : 'Rechercher une ville ou un code...'}
+              value={searchQuery}
+              onChange={e => setSearchQuery(e.target.value)}
+              className="w-full h-9 pl-9 pr-3 rtl:pl-3 rtl:pr-9 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200/80 dark:border-white/10 text-xs font-medium focus:outline-none focus:border-brand-500"
+            />
+          </div>
+
+          {/* List Items */}
+          <div className="max-h-56 overflow-y-auto custom-scrollbar p-1.5 space-y-0.5">
+            
+            {/* Custom Write-in option if user typing custom city */}
+            {searchQuery.trim() && (
+              <button
+                type="button"
+                onClick={() => handleSelect(searchQuery.trim())}
+                className="w-full px-3 py-2.5 rounded-xl bg-brand-500/10 hover:bg-brand-500/20 text-brand-600 dark:text-brand-400 text-xs font-bold transition-colors flex items-center justify-between text-left rtl:text-right"
+              >
+                <div className="flex items-center gap-2">
+                  <MapPin size={13} />
+                  <span>{isArabic ? `استخدام "${searchQuery}"` : `Utiliser "${searchQuery}"`}</span>
+                </div>
+                <span className="text-[10px] opacity-75">{isArabic ? 'سائجة مخصصة' : 'Saisie libre'}</span>
+              </button>
+            )}
+
+            {filteredAirports.map(item => {
+              const fullLabel = `${item.city} (${item.code})`;
+              const isSelected = value === fullLabel || value === item.city;
+              return (
+                <button
+                  key={item.code}
+                  type="button"
+                  onClick={() => handleSelect(fullLabel)}
+                  className={cn(
+                    "w-full px-3 py-2 rounded-xl text-xs transition-colors flex items-center justify-between text-left rtl:text-right",
+                    isSelected
+                      ? "bg-brand-500 text-white font-bold"
+                      : "hover:bg-slate-100 dark:hover:bg-white/5 text-slate-700 dark:text-slate-200"
+                  )}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <span className="text-base leading-none">{item.flag}</span>
+                    <div className="truncate">
+                      <span className="font-bold">{item.city}</span>{' '}
+                      <span className={cn("font-mono text-[11px]", isSelected ? "text-white/80" : "text-brand-600 dark:text-brand-400 font-extrabold")}>
+                        ({item.code})
+                      </span>
+                      <div className={cn("text-[10px] truncate", isSelected ? "text-white/80" : "text-slate-400")}>
+                        {item.name}
+                      </div>
+                    </div>
+                  </div>
+
+                  {isSelected && <Check size={14} className="shrink-0" />}
+                </button>
+              );
+            })}
+
+            {filteredAirports.length === 0 && !searchQuery.trim() && (
+              <div className="p-4 text-center text-xs text-slate-400 italic">
+                {isArabic ? 'لا توجد نتائج' : 'Aucun aéroport trouvé'}
+              </div>
+            )}
+          </div>
+
+        </div>
+      )}
+    </div>
+  );
+};
+
 export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
   const { user, clientProfile } = useClientAuth();
   const { t, isArabic } = useLanguage();
@@ -56,6 +241,7 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
   const [omraGroups, setOmraGroups] = useState(_cachedOmraGroups || DEFAULT_OMRA_GROUPS);
   const [hotelsList, setHotelsList] = useState(_cachedHotels || DEFAULT_HOTELS);
 
+  // General Client Info
   const [contactInfo, setContactInfo] = useState({
     nom: '',
     telephone: '',
@@ -64,14 +250,15 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
     remarques: ''
   });
 
+  // 1. Omra Form State
   const [omraForm, setOmraForm] = useState({
-    mode: 'organise', // 'organise' | 'a_la_carte'
+    mode: 'organise',
     groupe_id: DEFAULT_OMRA_GROUPS[0].id,
     groupe_nom: DEFAULT_OMRA_GROUPS[0].nom,
     hotel_choisi: '',
 
     // À la carte
-    parcours: 'makkah_medina', // 'makkah_medina' | 'makkah_only'
+    parcours: 'makkah_medina',
     hotel_makkah: '',
     hotel_medina: '',
     date_arrivee: '',
@@ -90,15 +277,28 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
       quintuple: 0
     },
 
-    // Enfants
     enfants: [],
-
-    // Train
     train_haramain: false
   });
 
+  // 2. Flight (Vols) Form State
+  const [flightForm, setFlightForm] = useState({
+    trip_type: 'aller_retour',
+    ville_depart: 'Alger (ALG)',
+    ville_arrivee: 'Istanbul (IST)',
+    date_aller: '',
+    date_retour: '',
+    classe: 'economique',
+    passagers: {
+      adultes: 1,
+      enfants: 0,
+      bebes: 0
+    },
+    compagnie_pref: ''
+  });
+
+  // Other Tabs Basic States
   const [otherForms, setOtherForms] = useState({
-    vols: { depart: 'Alger (ALG)', destination: 'Djeddah (JED)', date_aller: '', date_retour: '', passagers: 1 },
     hotels: { ville: 'Makkah', date_arrivee: '', date_depart: '', categorie: '5' },
     visas: { pays: 'Arabie Saoudite (Omra / Tourisme)', nbr_personnes: 1 },
     packages: { destination: 'Turquie', date_souhaitee: '', nbr_personnes: 2 }
@@ -136,6 +336,8 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
             remarques: `Formule demandée : ${initialData.nom}`
           }));
         }
+      } else if (initialData.type === 'vols') {
+        setActiveTab('vols');
       } else if (initialData.type === 'visa') {
         setActiveTab('visas');
       } else if (initialData.type === 'package') {
@@ -153,12 +355,11 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
     }
   }, [initialData, clientProfile, isOpen]);
 
-  // Find currently selected group object
+  // Selected Omra group
   const selectedGroupObj = useMemo(() => {
     return omraGroups.find(g => g.id === omraForm.groupe_id) || omraGroups[0] || null;
   }, [omraGroups, omraForm.groupe_id]);
 
-  // Extract hotels for selected group
   const groupHotelsList = useMemo(() => {
     if (!selectedGroupObj || !Array.isArray(selectedGroupObj.hotels) || selectedGroupObj.hotels.length === 0) {
       return hotelsList;
@@ -172,7 +373,7 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
     });
   }, [selectedGroupObj, hotelsList]);
 
-  // Total Beds / Adults
+  // Omra Total Beds
   const totalBeds = useMemo(() => {
     return (omraForm.chambres.single * 1) + 
            (omraForm.chambres.double * 2) + 
@@ -181,18 +382,42 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
            (omraForm.chambres.quintuple * 5);
   }, [omraForm.chambres]);
 
+  // Flight Total Passengers
+  const totalPassengers = useMemo(() => {
+    return (flightForm.passagers.adultes || 0) + 
+           (flightForm.passagers.enfants || 0) + 
+           (flightForm.passagers.bebes || 0);
+  }, [flightForm.passagers]);
+
   const handleChambreQtyChange = useCallback((type, delta) => {
     setOmraForm(prev => {
       const current = prev.chambres[type] || 0;
       const nextVal = Math.max(0, current + delta);
       return {
         ...prev,
-        chambres: {
-          ...prev.chambres,
-          [type]: nextVal
-        }
+        chambres: { ...prev.chambres, [type]: nextVal }
       };
     });
+  }, []);
+
+  const handleFlightPaxChange = useCallback((type, delta) => {
+    setFlightForm(prev => {
+      const current = prev.passagers[type] || 0;
+      const minVal = type === 'adultes' ? 1 : 0;
+      const nextVal = Math.max(minVal, current + delta);
+      return {
+        ...prev,
+        passagers: { ...prev.passagers, [type]: nextVal }
+      };
+    });
+  }, []);
+
+  const handleSwapCities = useCallback(() => {
+    setFlightForm(prev => ({
+      ...prev,
+      ville_depart: prev.ville_arrivee,
+      ville_arrivee: prev.ville_depart
+    }));
   }, []);
 
   const handleAddEnfant = useCallback(() => {
@@ -264,6 +489,25 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
               : `Hôtel Makkah: ${omraForm.hotel_makkah || 'À définir'}`);
 
         resumeText = `[DEVIS OMRA] Mode: ${omraForm.mode === 'organise' ? `Organisé (${omraForm.groupe_nom || 'Groupe'})` : `À la carte (${omraForm.parcours})`} | ${hotelInfoText} | Chambres: ${chambresSummary || 'Non spécifié'} (${totalBeds} lits) | Enfants: ${enfantsSummary} | Train Haramain: ${omraForm.train_haramain ? 'OUI' : 'NON'} ${omraForm.option_vip ? '| VIP: OUI' : ''} | Remarques: ${contactInfo.remarques || 'Aucune'}`;
+      } else if (activeTab === 'vols') {
+        const paxSummary = `${flightForm.passagers.adultes} Adulte(s), ${flightForm.passagers.enfants} Enfant(s), ${flightForm.passagers.bebes} Bébé(s)`;
+        
+        structuredDetails = {
+          service_type: 'vols',
+          trip_type: flightForm.trip_type,
+          ville_depart: flightForm.ville_depart,
+          ville_arrivee: flightForm.ville_arrivee,
+          date_aller: flightForm.date_aller,
+          date_retour: flightForm.trip_type === 'aller_retour' ? flightForm.date_retour : null,
+          classe: flightForm.classe,
+          passagers: flightForm.passagers,
+          total_passagers: totalPassengers,
+          compagnie_pref: flightForm.compagnie_pref || null,
+          wilaya: contactInfo.wilaya,
+          remarques: contactInfo.remarques
+        };
+
+        resumeText = `[DEVIS VOL] Trajet: ${flightForm.ville_depart} ➔ ${flightForm.ville_arrivee} (${flightForm.trip_type === 'aller_retour' ? 'Aller-Retour' : 'Aller Simple'}) | Dates: ${flightForm.date_aller || 'À fixer'} ${flightForm.trip_type === 'aller_retour' ? `➔ ${flightForm.date_retour || 'À fixer'}` : ''} | Classe: ${flightForm.classe} | Passagers: ${paxSummary} (${totalPassengers} pax) ${flightForm.compagnie_pref ? `| Compagnie: ${flightForm.compagnie_pref}` : ''} | Remarques: ${contactInfo.remarques || 'Aucune'}`;
       } else {
         structuredDetails = {
           service_type: activeTab,
@@ -478,7 +722,7 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
                     </div>
                   )}
 
-                  {/* ── Sub-Form: À la carte / Sur-mesure ── */}
+                  {/* ── Sub-Form: À la carte ── */}
                   {omraForm.mode === 'a_la_carte' && (
                     <div className="p-4 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200/70 dark:border-white/5 space-y-4">
                       
@@ -523,7 +767,7 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
                           </label>
                           <input
                             type="text"
-                            placeholder={isArabic ? 'مثال: فيرمونت برج الساعة، سويس أوتيل المقام، أو فندق 5 نجوم...' : 'Ex: Fairmont Clock Tower, Swissôtel Al Maqam, ou hôtel 4★/5★...'}
+                            placeholder={isArabic ? 'مثال: فيرمونت برج الساعة، سويس أوتيل المقام...' : 'Ex: Fairmont Clock Tower, Swissôtel Al Maqam...'}
                             value={omraForm.hotel_makkah}
                             onChange={e => setOmraForm({ ...omraForm, hotel_makkah: e.target.value })}
                             className="w-full h-11 px-3.5 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-xs font-medium focus:outline-none focus:border-brand-500"
@@ -537,7 +781,7 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
                             </label>
                             <input
                               type="text"
-                              placeholder={isArabic ? 'مثال: بولمان زمزم المدينة، موفنبيك أنوار المدينة...' : 'Ex: Pullman Zamzam Madina, Oberoi, Mövenpick...'}
+                              placeholder={isArabic ? 'مثال: بولمان زمزم المدينة، موفنبيك...' : 'Ex: Pullman Zamzam Madina, Oberoi...'}
                               value={omraForm.hotel_medina}
                               onChange={e => setOmraForm({ ...omraForm, hotel_medina: e.target.value })}
                               className="w-full h-11 px-3.5 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-xs font-medium focus:outline-none focus:border-brand-500"
@@ -550,7 +794,7 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
                             </label>
                             <input
                               type="text"
-                              placeholder={isArabic ? 'مثال: فيرمونت مكة، سويس أوتيل، فندق الشهداء...' : 'Ex: Fairmont Makkah, Swissôtel, Al Shohada...'}
+                              placeholder={isArabic ? 'مثال: فيرمونت مكة، سويس أوتيل...' : 'Ex: Fairmont Makkah, Swissôtel...'}
                               value={omraForm.hotel_makkah}
                               onChange={e => setOmraForm({ ...omraForm, hotel_makkah: e.target.value })}
                               className="w-full h-11 px-3.5 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-xs font-medium focus:outline-none focus:border-brand-500"
@@ -806,52 +1050,261 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
                 </div>
               )}
 
-              {/* ══════════ 2. AUTRES ONGLETS ══════════ */}
+              {/* ══════════ 2. ONGLET VOLS DÉTAILLÉ & ÉLÉGANT ══════════ */}
               {activeTab === 'vols' && (
-                <div className="space-y-4 p-4 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200/80 dark:border-white/5">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold block mb-1">Ville de Départ</label>
-                      <input
-                        type="text"
-                        value={otherForms.vols.depart}
-                        onChange={e => setOtherForms({ ...otherForms, vols: { ...otherForms.vols, depart: e.target.value } })}
-                        className="w-full h-10 px-3 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-xs font-bold"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold block mb-1">Destination</label>
-                      <input
-                        type="text"
-                        value={otherForms.vols.destination}
-                        onChange={e => setOtherForms({ ...otherForms, vols: { ...otherForms.vols, destination: e.target.value } })}
-                        className="w-full h-10 px-3 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-xs font-bold"
-                      />
-                    </div>
-                  </div>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div>
-                      <label className="text-xs font-bold block mb-1">Date Aller</label>
-                      <input
-                        type="date"
-                        value={otherForms.vols.date_aller}
-                        onChange={e => setOtherForms({ ...otherForms, vols: { ...otherForms.vols, date_aller: e.target.value } })}
-                        className="w-full h-10 px-3 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-xs font-bold"
-                      />
-                    </div>
-                    <div>
-                      <label className="text-xs font-bold block mb-1">Date Retour</label>
-                      <input
-                        type="date"
-                        value={otherForms.vols.date_retour}
-                        onChange={e => setOtherForms({ ...otherForms, vols: { ...otherForms.vols, date_retour: e.target.value } })}
-                        className="w-full h-10 px-3 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 text-xs font-bold"
-                      />
+                <div className="space-y-6">
+                  
+                  {/* Trip Type Selector: Aller-Retour vs Aller Simple */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                      {t('quote_flight_trip_type')}
+                    </label>
+                    <div className="grid grid-cols-2 gap-2.5 p-1 bg-slate-100 dark:bg-white/5 rounded-2xl border border-slate-200/80 dark:border-white/10">
+                      <button
+                        type="button"
+                        onClick={() => setFlightForm({ ...flightForm, trip_type: 'aller_retour' })}
+                        className={cn(
+                          "py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center gap-2",
+                          flightForm.trip_type === 'aller_retour'
+                            ? "bg-white dark:bg-[#222] text-slate-900 dark:text-white shadow-xs border border-slate-200/60 dark:border-white/10"
+                            : "text-slate-500 hover:text-slate-800 dark:hover:text-white"
+                        )}
+                      >
+                        <ArrowLeftRight size={14} className={flightForm.trip_type === 'aller_retour' ? "text-brand-500" : ""} />
+                        <span>{t('quote_flight_round_trip')}</span>
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => setFlightForm({ ...flightForm, trip_type: 'aller_simple' })}
+                        className={cn(
+                          "py-2.5 px-3 rounded-xl text-xs font-bold transition-all text-center flex items-center justify-center gap-2",
+                          flightForm.trip_type === 'aller_simple'
+                            ? "bg-white dark:bg-[#222] text-slate-900 dark:text-white shadow-xs border border-slate-200/60 dark:border-white/10"
+                            : "text-slate-500 hover:text-slate-800 dark:hover:text-white"
+                        )}
+                      >
+                        <Plane size={14} className={flightForm.trip_type === 'aller_simple' ? "text-brand-500" : ""} />
+                        <span>{t('quote_flight_one_way')}</span>
+                      </button>
                     </div>
                   </div>
+
+                  {/* High-End Searchable Dropdowns for Departure and Arrival */}
+                  <div className="p-4 sm:p-5 rounded-3xl bg-slate-50 dark:bg-white/5 border border-slate-200/80 dark:border-white/10 space-y-4 relative">
+                    
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 items-center">
+                      
+                      {/* Searchable Departure Dropdown */}
+                      <SearchableAirportSelect
+                        label={t('quote_flight_from')}
+                        value={flightForm.ville_depart}
+                        onChange={val => setFlightForm({ ...flightForm, ville_depart: val })}
+                        airports={DEPARTURE_AIRPORTS}
+                        placeholder={isArabic ? 'اختر مدينة الإقلاع...' : 'Choisir la ville de départ...'}
+                        isArabic={isArabic}
+                      />
+
+                      {/* Searchable Arrival Dropdown */}
+                      <SearchableAirportSelect
+                        label={t('quote_flight_to')}
+                        value={flightForm.ville_arrivee}
+                        onChange={val => setFlightForm({ ...flightForm, ville_arrivee: val })}
+                        airports={ARRIVAL_AIRPORTS}
+                        placeholder={isArabic ? 'اختر وجهة الوصول...' : 'Choisir la destination...'}
+                        isArabic={isArabic}
+                      />
+
+                    </div>
+
+                    {/* Quick Swap Button in Center */}
+                    <div className="flex items-center justify-center pt-1">
+                      <button
+                        type="button"
+                        onClick={handleSwapCities}
+                        className="px-3.5 py-1.5 rounded-full bg-white dark:bg-[#252525] border border-slate-200 dark:border-white/15 text-slate-700 dark:text-slate-200 hover:text-brand-500 text-xs font-bold flex items-center gap-1.5 shadow-xs hover:scale-105 active:scale-95 transition-all"
+                      >
+                        <ArrowLeftRight size={13} className="text-brand-500" />
+                        <span>{isArabic ? 'عكس الاتجاه' : 'Inverser le trajet'}</span>
+                      </button>
+                    </div>
+
+                  </div>
+
+                  {/* Flight Dates */}
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                        {t('quote_flight_date_depart')}
+                      </label>
+                      <input
+                        type="date"
+                        required
+                        value={flightForm.date_aller}
+                        onChange={e => setFlightForm({ ...flightForm, date_aller: e.target.value })}
+                        className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
+                      />
+                    </div>
+
+                    {flightForm.trip_type === 'aller_retour' && (
+                      <div>
+                        <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1">
+                          {t('quote_flight_date_return')}
+                        </label>
+                        <input
+                          type="date"
+                          required={flightForm.trip_type === 'aller_retour'}
+                          value={flightForm.date_retour}
+                          onChange={e => setFlightForm({ ...flightForm, date_retour: e.target.value })}
+                          className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-xs font-bold text-slate-900 dark:text-white focus:outline-none focus:border-brand-500"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Flight Class: Éco vs Business vs First */}
+                  <div className="space-y-2">
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                      {t('quote_flight_class')}
+                    </label>
+                    <div className="grid grid-cols-3 gap-2">
+                      {[
+                        { key: 'economique', label: t('quote_flight_class_eco') },
+                        { key: 'business', label: t('quote_flight_class_business') },
+                        { key: 'first', label: t('quote_flight_class_first') },
+                      ].map(cl => (
+                        <button
+                          key={cl.key}
+                          type="button"
+                          onClick={() => setFlightForm({ ...flightForm, classe: cl.key })}
+                          className={cn(
+                            "py-2.5 px-3 rounded-xl text-xs font-bold border transition-all text-center",
+                            flightForm.classe === cl.key
+                              ? "bg-brand-500 text-white border-brand-500 shadow-xs"
+                              : "bg-slate-50 dark:bg-white/5 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-white/10 hover:bg-slate-100 dark:hover:bg-white/10"
+                          )}
+                        >
+                          {cl.label}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Passengers Breakdown */}
+                  <div className="space-y-3 p-4 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200/80 dark:border-white/5">
+                    <div className="flex items-center justify-between">
+                      <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block">
+                        {t('quote_flight_passengers')}
+                      </label>
+                      <span className="text-[11px] font-black px-2.5 py-0.5 rounded-full bg-brand-500/10 text-brand-600 dark:text-brand-400">
+                        {totalPassengers} {isArabic ? 'مسافر' : (totalPassengers > 1 ? 'passagers' : 'passager')}
+                      </span>
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2.5">
+                      
+                      {/* Adults */}
+                      <div className="p-3 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-bold block">{t('quote_flight_adults')}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleFlightPaxChange('adultes', -1)}
+                            disabled={flightForm.passagers.adultes <= 1}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#252525] border border-slate-200 dark:border-white/10 flex items-center justify-center text-xs font-bold disabled:opacity-30"
+                          >
+                            <Minus size={11} />
+                          </button>
+                          <span className="w-5 text-center text-xs font-black font-mono">
+                            {flightForm.passagers.adultes}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleFlightPaxChange('adultes', 1)}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#252525] border border-slate-200 dark:border-white/10 flex items-center justify-center text-xs font-bold text-brand-500"
+                          >
+                            <Plus size={11} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Children */}
+                      <div className="p-3 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-bold block">{t('quote_flight_children')}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleFlightPaxChange('enfants', -1)}
+                            disabled={flightForm.passagers.enfants <= 0}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#252525] border border-slate-200 dark:border-white/10 flex items-center justify-center text-xs font-bold disabled:opacity-30"
+                          >
+                            <Minus size={11} />
+                          </button>
+                          <span className="w-5 text-center text-xs font-black font-mono">
+                            {flightForm.passagers.enfants}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleFlightPaxChange('enfants', 1)}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#252525] border border-slate-200 dark:border-white/10 flex items-center justify-center text-xs font-bold text-brand-500"
+                          >
+                            <Plus size={11} />
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Infants */}
+                      <div className="p-3 rounded-xl bg-white dark:bg-[#1a1a1a] border border-slate-200 dark:border-white/10 flex items-center justify-between">
+                        <div>
+                          <span className="text-xs font-bold block">{t('quote_flight_infants')}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => handleFlightPaxChange('bebes', -1)}
+                            disabled={flightForm.passagers.bebes <= 0}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#252525] border border-slate-200 dark:border-white/10 flex items-center justify-center text-xs font-bold disabled:opacity-30"
+                          >
+                            <Minus size={11} />
+                          </button>
+                          <span className="w-5 text-center text-xs font-black font-mono">
+                            {flightForm.passagers.bebes}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleFlightPaxChange('bebes', 1)}
+                            className="w-7 h-7 rounded-lg bg-slate-100 dark:bg-[#252525] border border-slate-200 dark:border-white/10 flex items-center justify-center text-xs font-bold text-brand-500"
+                          >
+                            <Plus size={11} />
+                          </button>
+                        </div>
+                      </div>
+
+                    </div>
+                  </div>
+
+                  {/* Compagnie Aérienne Préférée */}
+                  <div>
+                    <label className="text-xs font-bold text-slate-700 dark:text-slate-300 block mb-1.5">
+                      {t('quote_flight_airline_pref')}
+                    </label>
+                    <input
+                      type="text"
+                      placeholder={isArabic ? 'مثال: الخطوط الجوية الجزائرية، السعودية، الخطوط التركية، القطرية...' : 'Ex: Air Algérie, Saudia, Turkish Airlines, Qatar Airways, Emirates...'}
+                      value={flightForm.compagnie_pref}
+                      onChange={e => setFlightForm({ ...flightForm, compagnie_pref: e.target.value })}
+                      className="w-full h-11 px-3.5 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-xs font-medium focus:outline-none focus:border-brand-500"
+                    />
+                  </div>
+
                 </div>
               )}
 
+              {/* ══════════ 3. AUTRES ONGLETS (Hotels, Visas, Packages) ══════════ */}
               {activeTab === 'hotels' && (
                 <div className="space-y-4 p-4 rounded-2xl bg-slate-50 dark:bg-white/5 border border-slate-200/80 dark:border-white/5">
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -978,7 +1431,7 @@ export const QuoteSimulatorModal = ({ isOpen, onClose, initialData }) => {
                   </label>
                   <textarea
                     rows={3}
-                    placeholder={isArabic ? 'أي تفاصيل إضافية تود إخبارنا بها...' : 'Précisez vos souhaits (proximité, chambres communicantes, etc.)...'}
+                    placeholder={isArabic ? 'أي تفاصيل إضافية تود إخبارنا بها...' : 'Précisez vos souhaits (bagages supplémentaires, repas spécial, etc.)...'}
                     value={contactInfo.remarques}
                     onChange={e => setContactInfo({ ...contactInfo, remarques: e.target.value })}
                     className="w-full p-3 rounded-xl bg-slate-50 dark:bg-white/5 border border-slate-200 dark:border-white/10 text-xs font-medium focus:outline-none focus:border-brand-500"
