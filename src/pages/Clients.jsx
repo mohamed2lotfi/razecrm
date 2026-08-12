@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Users, Trash2, Loader2, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Users, Trash2, Loader2, Pencil, Search, ChevronLeft, ChevronRight, MessageSquare, FolderOpen } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import ClientForm from '@/components/ClientForm';
+import ClientRemarquesModal from '@/components/ClientRemarquesModal';
+import ClientDossierModal from '@/components/ClientDossierModal';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 
@@ -14,6 +16,8 @@ const Clients = () => {
   const [loading, setLoading] = useState(true);
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingClient, setEditingClient] = useState(null);
+  const [selectedClientForRemarques, setSelectedClientForRemarques] = useState(null);
+  const [selectedClientForDossier, setSelectedClientForDossier] = useState(null);
 
   // Pagination & Search
   const [searchQuery, setSearchQuery] = useState('');
@@ -58,19 +62,47 @@ const Clients = () => {
   };
 
   const handleSave = async (newClientData) => {
+    const payload = {
+      nom: newClientData.nom,
+      email: newClientData.email || null,
+      telephone: newClientData.telephone || null,
+      type: newClientData.type || 'Particulier',
+    };
+
     if (newClientData.id) {
-      const { data, error } = await supabase.from('clients').update(newClientData).eq('id', newClientData.id).select();
-      if (!error && data) {
-        setClients(clients.map(c => c.id === newClientData.id ? data[0] : c));
+      const { data, error } = await supabase
+        .from('clients')
+        .update(payload)
+        .eq('id', newClientData.id)
+        .select('*, ventes(id), pipeline(id)');
+
+      if (error) {
+        console.error('Error updating client:', error);
+        alert('Erreur lors de la mise à jour du client : ' + error.message);
+        return;
+      }
+
+      if (data && data.length > 0) {
+        setClients(prev => prev.map(c => c.id === newClientData.id ? data[0] : c));
         setIsFormOpen(false);
         setEditingClient(null);
       }
     } else {
-      const { data, error } = await supabase.from('clients').insert([newClientData]).select();
-      if (!error && data) {
-        // Optionnel : Forcer un rafraîchissement complet pour garder la pagination juste
+      const { data, error } = await supabase
+        .from('clients')
+        .insert([payload])
+        .select('*, ventes(id), pipeline(id)');
+
+      if (error) {
+        console.error('Error creating client:', error);
+        alert('Erreur lors de la création du client : ' + error.message);
+        return;
+      }
+
+      if (data) {
         fetchClients();
         setIsFormOpen(false);
+        setEditingClient(null);
       }
     }
   };
@@ -163,6 +195,24 @@ const Clients = () => {
                   <td className="px-4 py-3 text-muted-foreground">{c.telephone || '—'}</td>
                   <td className="px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1.5">
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => setSelectedClientForDossier(c)}
+                        className="gap-1.5 bg-blue-50 hover:bg-blue-100 hover:text-blue-800 hover:border-blue-300 text-xs text-blue-800 font-bold transition-colors shadow-2xs"
+                        title="Consulter le dossier client (Ventes, Inscriptions Omra, Devis et Remarques)"
+                      >
+                        <FolderOpen size={13} className="text-blue-600" /> Dossier
+                      </Button>
+                      <Button 
+                        variant="outline" 
+                        size="sm" 
+                        onClick={() => setSelectedClientForRemarques(c)}
+                        className="gap-1.5 bg-slate-50 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-xs text-slate-700 transition-colors"
+                        title="Consulter et ajouter des remarques d'équipe sur ce client"
+                      >
+                        <MessageSquare size={13} className="text-emerald-600" /> Remarques
+                      </Button>
                       <Button variant="outline" size="sm" onClick={() => { setEditingClient(c); setIsFormOpen(true); }}>
                         <Pencil size={14} /> Modifier
                       </Button>
@@ -208,6 +258,25 @@ const Clients = () => {
       )}
 
       {isFormOpen && <ClientForm onClose={() => { setIsFormOpen(false); setEditingClient(null); }} onSave={handleSave} initialData={editingClient} />}
+      
+      {selectedClientForRemarques && (
+        <ClientRemarquesModal
+          isOpen={true}
+          onClose={() => setSelectedClientForRemarques(null)}
+          client={selectedClientForRemarques}
+          onRemarquesUpdated={(clientId, updatedRemarques) => {
+            setClients(prev => prev.map(c => c.id === clientId ? { ...c, remarques: updatedRemarques } : c));
+          }}
+        />
+      )}
+
+      {selectedClientForDossier && (
+        <ClientDossierModal
+          isOpen={true}
+          onClose={() => setSelectedClientForDossier(null)}
+          client={selectedClientForDossier}
+        />
+      )}
     </Layout>
   );
 };

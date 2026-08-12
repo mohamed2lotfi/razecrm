@@ -18,6 +18,8 @@ import Visas from '@/pages/Visas';
 import BanqueContacts from '@/pages/BanqueContacts';
 import EmailMarketing from '@/pages/EmailMarketing';
 import Packages from '@/pages/Packages';
+import SimulateurDevis from '@/pages/SimulateurDevis';
+import Profile from '@/pages/Profile';
 
 const RoleRoute = ({ children, allowedRoles = ['admin', 'agent'] }) => {
   const { session, role } = useAuth();
@@ -45,6 +47,9 @@ function App() {
           {/* Routes Opérationnelles (Admin & Agent) */}
           <Route path="/" element={<RoleRoute allowedRoles={['admin', 'agent']}><Ventes /></RoleRoute>} />
           <Route path="/pipeline" element={<RoleRoute allowedRoles={['admin', 'agent']}><Pipeline /></RoleRoute>} />
+          <Route path="/simulateur-devis" element={<RoleRoute allowedRoles={['admin', 'agent']}><SimulateurDevis /></RoleRoute>} />
+          <Route path="/profil" element={<RoleRoute allowedRoles={['admin', 'agent']}><Profile /></RoleRoute>} />
+          <Route path="/profile" element={<RoleRoute allowedRoles={['admin', 'agent']}><Profile /></RoleRoute>} />
           <Route path="/omra" element={<RoleRoute allowedRoles={['admin', 'agent']}><Omra /></RoleRoute>} />
           <Route path="/omra/pelerins" element={<RoleRoute allowedRoles={['admin', 'agent']}><Pelerins /></RoleRoute>} />
           <Route path="/omra/group/:id" element={<RoleRoute allowedRoles={['admin', 'agent']}><OmraGroupDetails /></RoleRoute>} />

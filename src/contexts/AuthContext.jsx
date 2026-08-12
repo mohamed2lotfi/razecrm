@@ -34,7 +34,9 @@ export const AuthProvider = ({ children }) => {
           id: userId,
           email: userEmail,
           nom: userEmail ? userEmail.split('@')[0] : 'Utilisateur',
-          role: 'admin' // Par défaut admin pour le compte principal si non défini
+          role: 'admin', // Par défaut admin pour le compte principal si non défini
+          avatar_url: null,
+          telephone: ''
         };
         setProfile(fallbackProfile);
         return fallbackProfile;
@@ -44,7 +46,10 @@ export const AuthProvider = ({ children }) => {
       const fallback = {
         id: userId,
         email: userEmail,
-        role: 'admin'
+        nom: userEmail ? userEmail.split('@')[0] : 'Utilisateur',
+        role: 'admin',
+        avatar_url: null,
+        telephone: ''
       };
       setProfile(fallback);
       return fallback;
@@ -93,6 +98,111 @@ export const AuthProvider = ({ children }) => {
     return null;
   };
 
+  // Update profile information (nom, avatar_url, telephone)
+  const updateProfile = async (updates) => {
+    if (!user?.id) throw new Error("Utilisateur non connecté");
+
+    const payload = {
+      ...updates,
+      updated_at: new Date().toISOString()
+    };
+
+    // Update in Supabase
+    const { data, error } = await supabase
+      .from('profiles')
+      .upsert({ id: user.id, email: user.email, ...payload })
+      .select();
+
+    if (error) {
+      // Fallback local state if table doesn't have the column yet
+      console.warn('Erreur DB profile update, fallback local:', error);
+      setProfile(prev => ({ ...prev, ...updates }));
+      return { ...profile, ...updates };
+    }
+
+    if (data && data[0]) {
+      setProfile(data[0]);
+      return data[0];
+    } else {
+      setProfile(prev => ({ ...prev, ...updates }));
+      return { ...profile, ...updates };
+    }
+  };
+
+  // Upload Avatar image (supports Supabase storage bucket with Base64 fallback)
+  const uploadAvatar = async (file) => {
+    if (!user?.id) throw new Error("Utilisateur non connecté");
+    if (!file) throw new Error("Aucun fichier sélectionné");
+
+    try {
+      const fileExt = file.name ? file.name.split('.').pop() : 'jpg';
+      const filePath = `user_${user.id}_${Date.now()}.${fileExt}`;
+
+      // Try uploading to Supabase 'avatars' storage bucket
+      const { data: uploadData, error: uploadError } = await supabase.storage
+        .from('avatars')
+        .upload(filePath, file, {
+          cacheControl: '3600',
+          upsert: true
+        });
+
+      if (!uploadError && uploadData) {
+        const { data: urlData } = supabase.storage
+          .from('avatars')
+          .getPublicUrl(filePath);
+
+        if (urlData?.publicUrl) {
+          await updateProfile({ avatar_url: urlData.publicUrl });
+          return urlData.publicUrl;
+        }
+      }
+    } catch (storageErr) {
+      console.warn("Storage upload failed, using Data URL fallback:", storageErr);
+    }
+
+    // Reliable fallback: convert to base64 Data URL
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = async () => {
+        try {
+          const base64Url = reader.result;
+          await updateProfile({ avatar_url: base64Url });
+          resolve(base64Url);
+        } catch (e) {
+          reject(e);
+        }
+      };
+      reader.onerror = error => reject(error);
+      reader.readAsDataURL(file);
+    });
+  };
+
+  // Update Email via Supabase Auth
+  const updateEmail = async (newEmail) => {
+    if (!newEmail || newEmail.trim() === '') throw new Error("Veuillez saisir une adresse email valide");
+    
+    const { data, error } = await supabase.auth.updateUser({ email: newEmail.trim() });
+    if (error) throw error;
+
+    // Update in profiles table as well
+    if (user?.id) {
+      await supabase.from('profiles').update({ email: newEmail.trim() }).eq('id', user.id);
+      setProfile(prev => ({ ...prev, email: newEmail.trim() }));
+    }
+
+    return data;
+  };
+
+  // Update Password via Supabase Auth
+  const updatePassword = async (newPassword) => {
+    if (!newPassword || newPassword.length < 6) {
+      throw new Error("Le mot de passe doit contenir au moins 6 caractères");
+    }
+    const { data, error } = await supabase.auth.updateUser({ password: newPassword });
+    if (error) throw error;
+    return data;
+  };
+
   const signIn = async (email, password) => {
     const { data, error } = await supabase.auth.signInWithPassword({ email, password });
     if (error) throw error;
@@ -120,6 +230,10 @@ export const AuthProvider = ({ children }) => {
     isAdmin,
     isAgent,
     refreshProfile,
+    updateProfile,
+    uploadAvatar,
+    updateEmail,
+    updatePassword,
     signIn,
     signOut,
   };
@@ -130,4 +244,3 @@ export const AuthProvider = ({ children }) => {
     </AuthContext.Provider>
   );
 };
-

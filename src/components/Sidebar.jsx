@@ -5,15 +5,17 @@ import {
   LayoutDashboard, Users, CreditCard, FileText, 
   Database, KanbanSquare, Globe, ChevronDown, ChevronRight, LogOut,
   TrendingDown, FileBarChart, Scan, Briefcase, Stamp, Contact, Mail,
-  ShieldCheck, UserCheck, Package
+  ShieldCheck, UserCheck, Package, Calculator, User
 } from 'lucide-react';
 import useLocalStorage from '@/hooks/useLocalStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
+import UserAvatar from '@/components/UserAvatar';
 
 const navItems = [
   { to: '/', icon: CreditCard, label: 'Ventes', end: true },
   { to: '/pipeline', icon: KanbanSquare, label: 'Devis' },
+  { to: '/simulateur-devis', icon: Calculator, label: 'Simulateur Devis' },
   { to: '/clients', icon: Users, label: 'Clients' },
   { to: '/banque-contacts', icon: Contact, label: 'Contacts B2B' },
 ];
@@ -28,6 +30,7 @@ const marketingItems = [
 ];
 
 const settingsItems = [
+  { to: '/profil', icon: User, label: 'Mon Profil' },
   { to: '/master-data', icon: Database, label: 'Master Data' },
 ];
 
@@ -215,14 +218,25 @@ const Sidebar = () => {
 
       {/* User Info & Role Badge */}
       <div className="mt-auto pt-4 border-t border-slate-800 flex flex-col gap-3">
-        <div className="flex items-center justify-between px-2 py-1.5 rounded-lg bg-white/5 border border-white/10">
+        <div 
+          onClick={() => navigate('/profil')}
+          className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-primary/40 cursor-pointer transition-all duration-200 group"
+          title="Voir et modifier mon profil"
+        >
           <div className="flex items-center gap-2.5 min-w-0">
-            <div className="w-8 h-8 rounded-full bg-gradient-to-tr from-primary to-violet-500 flex items-center justify-center text-white font-bold text-xs flex-shrink-0">
-              {userInitial}
-            </div>
+            <UserAvatar 
+              user={profile || user} 
+              size="sm" 
+              showOnline={true}
+              className="ring-2 ring-white/15 group-hover:ring-primary/50 transition-all"
+            />
             <div className="flex flex-col min-w-0">
-              <span className="text-xs font-semibold text-slate-200 truncate">{displayName}</span>
-              <span className="text-[10px] text-slate-400 truncate">{user?.email}</span>
+              <span className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors truncate">
+                {displayName}
+              </span>
+              <span className="text-[10px] text-slate-400 truncate">
+                {user?.email}
+              </span>
             </div>
           </div>
           <div className="flex-shrink-0 ml-2">

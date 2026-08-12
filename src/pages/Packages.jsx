@@ -10,6 +10,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import CountryFlag from '@/components/CountryFlag';
 import { 
   Package, Plus, Search, Calendar, Clock, MapPin, 
   Plane, Bus, Stamp, Hotel, Star, Copy, Edit2, 
@@ -604,7 +605,7 @@ const Packages = () => {
 
                     {/* Destination Pill (Top Left) */}
                     <div className="absolute top-3 left-3 bg-black/60 backdrop-blur-md text-white text-xs font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-sm">
-                      <span>{dest?.emoji || '✈️'}</span>
+                      <CountryFlag emoji={dest?.emoji} destinationName={dest?.nom} className="w-4 h-3" fallbackEmoji="✈️" />
                       <span>{dest?.nom || 'Destination'}</span>
                     </div>
 
@@ -1463,7 +1464,7 @@ const Packages = () => {
           <DialogContent className="max-w-2xl p-6" onClose={() => setPreviewPackage(null)}>
             <div className="flex items-center justify-between pb-4 border-b">
               <div className="flex items-center gap-3">
-                <span className="text-3xl">{getDestinationObj(previewPackage.destination_id)?.emoji || '✈️'}</span>
+                <CountryFlag emoji={getDestinationObj(previewPackage.destination_id)?.emoji} destinationName={getDestinationObj(previewPackage.destination_id)?.nom} className="w-8 h-6 rounded-xs shadow-xs" fallbackEmoji="✈️" />
                 <div>
                   <DialogTitle className="text-lg font-black">{previewPackage.nom}</DialogTitle>
                   <DialogDescription className="text-xs">

@@ -1022,12 +1022,104 @@ const OmraGroupDetails = () => {
     setEditingId(null);
   };
 
+  const handleDeleteCurrentGroup = async () => {
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le groupe Omra "${groupe?.nom}" ?\n\nTous les enregistrements, pèlerins, paiements et commissions associés seront supprimés.`)) {
+      return;
+    }
+    try {
+      await supabase.from('omra_paiements').delete().eq('groupe_id', id);
+      await supabase.from('omra_paiements_commissions').delete().eq('groupe_id', id);
+      await supabase.from('omra_enregistrements').delete().eq('groupe_id', id);
+      const { error } = await supabase.from('omra_groupes').delete().eq('id', id);
+      if (error) {
+        alert("Erreur lors de la suppression du groupe : " + error.message);
+      } else {
+        navigate('/omra');
+      }
+    } catch (err) {
+      alert("Une erreur est survenue : " + err.message);
+    }
+  };
+
   const handleDelete = async (recordId) => {
-    const { error } = await supabase.from('omra_enregistrements').delete().eq('id', recordId);
-    if (!error) {
-      setEnregistrements(enregistrements.filter(e => e.id !== recordId));
-    } else {
-      alert('Erreur: ' + error.message);
+    const targetEnr = enregistrements.find(e => e.id === recordId);
+    const clientOrFirstPax = clients.find(c => c.id === targetEnr?.clientId)?.nom || targetEnr?.pelerins?.[0]?.nom || 'cet enregistrement';
+
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer l'enregistrement "${clientOrFirstPax}" ?\n\nTous les paiements associés seront également supprimés.`)) {
+      return;
+    }
+
+    try {
+      await supabase.from('omra_paiements').delete().eq('enregistrement_id', recordId);
+      const { error } = await supabase.from('omra_enregistrements').delete().eq('id', recordId);
+      if (!error) {
+        setEnregistrements(prev => prev.filter(e => e.id !== recordId));
+        setPaiements(prev => prev.filter(p => p.enregistrementId !== recordId));
+        if (editingId === recordId) {
+          setIsModalOpen(false);
+          setEditingId(null);
+        }
+      } else {
+        alert('Erreur lors de la suppression : ' + error.message);
+      }
+    } catch (err) {
+      alert('Une erreur est survenue : ' + err.message);
+    }
+  };
+
+  const handleDeletePelerinFromGroup = async (enrId, pelerinObj, isEnfantSansLit) => {
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer le pèlerin "${pelerinObj.nom}" de ce groupe ?`)) {
+      return;
+    }
+
+    const enr = enregistrements.find(e => e.id === enrId);
+    if (!enr) return;
+
+    try {
+      if (isEnfantSansLit) {
+        const newEnfants = (enr.enfantsSansLit || []).filter(e => 
+          (pelerinObj.pelerin_id && e.pelerin_id) ? e.pelerin_id !== pelerinObj.pelerin_id : e.nom !== pelerinObj.nom
+        );
+        const updatedEnr = { ...enr, enfantsSansLit: newEnfants };
+        const payload = mapCamelToEnregistrement(updatedEnr, intermediaires);
+        const { error } = await supabase.from('omra_enregistrements').update(payload).eq('id', enrId);
+        if (!error) {
+          setEnregistrements(prev => prev.map(e => e.id === enrId ? mapEnregistrementToCamel(payload, intermediaires) : e));
+          if (pelerinObj.pelerin_id) {
+            supabase.from('pelerins').delete().eq('id', pelerinObj.pelerin_id).then();
+          }
+        } else {
+          alert('Erreur lors de la suppression : ' + error.message);
+        }
+      } else {
+        const newPelerins = (enr.pelerins || []).filter(p => 
+          (pelerinObj.pelerin_id && p.pelerin_id) ? p.pelerin_id !== pelerinObj.pelerin_id : p.nom !== pelerinObj.nom
+        );
+
+        if (newPelerins.length === 0 && (!enr.enfantsSansLit || enr.enfantsSansLit.length === 0)) {
+          if (window.confirm(`Ce pèlerin est le seul occupant du dossier. Supprimer l'enregistrement complet ?`)) {
+            await handleDelete(enrId);
+            if (pelerinObj.pelerin_id) {
+              supabase.from('pelerins').delete().eq('id', pelerinObj.pelerin_id).then();
+            }
+          }
+          return;
+        }
+
+        const updatedEnr = { ...enr, pelerins: newPelerins };
+        const payload = mapCamelToEnregistrement(updatedEnr, intermediaires);
+        const { error } = await supabase.from('omra_enregistrements').update(payload).eq('id', enrId);
+        if (!error) {
+          setEnregistrements(prev => prev.map(e => e.id === enrId ? mapEnregistrementToCamel(payload, intermediaires) : e));
+          if (pelerinObj.pelerin_id) {
+            supabase.from('pelerins').delete().eq('id', pelerinObj.pelerin_id).then();
+          }
+        } else {
+          alert('Erreur lors de la suppression : ' + error.message);
+        }
+      }
+    } catch (err) {
+      alert('Une erreur est survenue : ' + err.message);
     }
   };
 
@@ -1679,15 +1771,26 @@ const OmraGroupDetails = () => {
               </div>
             </div>
             
-            <div className="flex gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
+              {isAdmin && (
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={handleDeleteCurrentGroup} 
+                  className="bg-red-500/20 hover:bg-red-500/30 text-red-100 border border-red-400/30 font-medium text-xs h-9"
+                  title="Supprimer ce groupe Omra"
+                >
+                  <Trash2 size={14} className="mr-1.5" /> Supprimer le groupe
+                </Button>
+              )}
               {activeTab === 'enregistrements' && (
-                <Button onClick={handleCreateNewRoom} className="bg-white/15 hover:bg-white/25 text-white border border-white/20">
-                  <Plus size={16} className="mr-2" /> Ajouter un enregistrement
+                <Button onClick={handleCreateNewRoom} className="bg-white/15 hover:bg-white/25 text-white border border-white/20 h-9 text-xs">
+                  <Plus size={16} className="mr-1.5" /> Ajouter un enregistrement
                 </Button>
               )}
               {activeTab === 'paiements' && (
-                <Button onClick={handleOpenPaymentGlobal} className="bg-white/15 hover:bg-white/25 text-white border border-white/20">
-                  <Plus size={16} className="mr-2" /> Ajouter un paiement
+                <Button onClick={handleOpenPaymentGlobal} className="bg-white/15 hover:bg-white/25 text-white border border-white/20 h-9 text-xs">
+                  <Plus size={16} className="mr-1.5" /> Ajouter un paiement
                 </Button>
               )}
             </div>
@@ -1950,6 +2053,7 @@ const OmraGroupDetails = () => {
                       <th className="px-4 py-3 border border-gray-200 text-right text-emerald-700">Total Payé</th>
                       <th className="px-4 py-3 border border-gray-200 text-right text-red-600">Reste</th>
                       <th className="px-4 py-3 border border-gray-200 text-center">Etat</th>
+                      {isAdmin && <th className="px-3 py-3 border border-gray-200 text-center w-12">Actions</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
@@ -1960,7 +2064,7 @@ const OmraGroupDetails = () => {
                       if (hotelEnregistrements.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={11} className="px-4 py-8 text-center text-gray-500">Aucun enregistrement pour cet hôtel.</td>
+                            <td colSpan={isAdmin ? 12 : 11} className="px-4 py-8 text-center text-gray-500">Aucun enregistrement pour cet hôtel.</td>
                           </tr>
                         );
                       }
@@ -2053,6 +2157,19 @@ const OmraGroupDetails = () => {
                             <td className={cn("px-4 py-2 border border-gray-200 text-center font-bold text-xs uppercase tracking-wider", etatColor)}>
                               {etat}
                             </td>
+                            {isAdmin && (
+                              <td className="px-3 py-2 border border-gray-200 text-center align-middle">
+                                <Button
+                                  variant="ghost"
+                                  size="icon-sm"
+                                  onClick={() => handleDeletePelerinFromGroup(enr.id, pelerin, pelerin.isEnfantSansLit)}
+                                  className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                  title="Supprimer ce pèlerin"
+                                >
+                                  <Trash2 size={13} />
+                                </Button>
+                              </td>
+                            )}
                           </tr>
                         );
                       });
@@ -3087,6 +3204,18 @@ const OmraGroupDetails = () => {
                         <p className="text-[10px] text-blue-300 mt-1 leading-none">-{totalCommission.toLocaleString('fr-DZ')} (Comm.)</p>
                       )}
                     </div>
+                    {isAdmin && editingId && (
+                      <Button 
+                        type="button" 
+                        variant="destructive" 
+                        onClick={() => handleDelete(editingId)} 
+                        className="h-11 px-4 text-xs font-bold gap-1.5 shadow-sm"
+                        title="Supprimer définitivement ce dossier"
+                      >
+                        <Trash2 size={14} />
+                        Supprimer le dossier
+                      </Button>
+                    )}
                     <Button type="submit" disabled={pelerinsValides.length === 0} className="bg-emerald-500 hover:bg-emerald-600 text-white shadow-lg h-11 px-6 text-sm font-bold">
                       Valider l'enregistrement
                     </Button>

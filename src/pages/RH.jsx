@@ -11,6 +11,7 @@ import {
   Plus, Users, Search, Loader2, Phone, Mail, Calendar, 
   CreditCard, ShieldCheck, Coins, Key, UserCheck, Trash2, UserPlus, Lock 
 } from 'lucide-react';
+import UserAvatar from '@/components/UserAvatar';
 
 // Composant utilitaire pour l'avatar généré avec les initiales
 const Avatar = ({ firstName, lastName }) => {
@@ -364,7 +365,7 @@ const RH = () => {
                           <tr key={emp.id} className="hover:bg-slate-50/80 transition-all duration-200 group">
                             <td className="px-6 py-4">
                               <div className="flex items-center gap-4">
-                                <Avatar firstName={emp.first_name} lastName={emp.last_name} />
+                                <UserAvatar user={userProfile} name={fullName} size="md" />
                                 <div>
                                   <div className="font-bold text-slate-900 text-base group-hover:text-indigo-700 transition-colors">
                                     {fullName}

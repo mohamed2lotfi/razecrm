@@ -6,6 +6,8 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
+import CountryFlag from '@/components/CountryFlag';
+import UserAvatar from '@/components/UserAvatar';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -1084,13 +1086,22 @@ const AISettings = () => {
 
             <div>
               <label className="text-sm font-semibold mb-1 block">System Prompt (Consignes pour l'IA)</label>
-              <p className="text-xs text-muted-foreground mb-2">
-                Personnalisez le comportement de l'IA lors de la génération de devis. 
-                <br/><b>Tokens disponibles :</b> <code>[client reques]</code> (détails de la demande) et <code>[agent offre]</code> (détails du devis interne).
-              </p>
+              <div className="text-xs text-muted-foreground mb-2 space-y-1">
+                <p>Personnalisez le comportement de l'IA lors de la génération de devis. Les tokens ci-dessous sont automatiquement remplacés selon les choix de l'agent :</p>
+                <div className="flex flex-wrap gap-1.5 pt-1">
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[client reques]</code>
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[agent offre]</code>
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[langue]</code>
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[forme]</code>
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[emojis]</code>
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[client_nom]</code>
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[destination]</code>
+                  <code className="bg-primary/10 text-primary font-bold px-1.5 py-0.5 rounded text-[11px]">[instructions_extra]</code>
+                </div>
+              </div>
               <Textarea 
-                placeholder="Ex: Tu es un agent de voyage. Rédige le message WhatsApp final. Utilise 'Nous avons le plaisir' et termine toujours par : 'Nous restons à votre entière disposition pour toute information complémentaire ou éventuelle réservation. Merci de choisir l'agence El Mokhtar Travel.' Demande: [client reques] Offre: [agent offre]" 
-                className="min-h-[120px]"
+                placeholder="Ex: Tu es un conseiller voyage expert. Rédige le devis final dans la langue: [langue], avec le ton: [forme], et consigne emojis: [emojis]. Nom client: [client_nom], Destination: [destination]. Demande: [client reques] Offre: [agent offre]. Instructions: [instructions_extra]" 
+                className="min-h-[140px] text-xs font-mono"
                 value={systemPrompt}
                 onChange={(e) => setSystemPrompt(e.target.value)}
               />
@@ -2046,9 +2057,7 @@ const UsersSettings = () => {
                       <tr key={p.id} className="hover:bg-muted/20 transition-colors">
                         <td className="px-4 py-3.5">
                           <div className="flex items-center gap-3">
-                            <div className={`w-9 h-9 rounded-full flex items-center justify-center font-bold text-xs text-white ${isAdminUser ? 'bg-gradient-to-br from-amber-500 to-orange-600' : 'bg-gradient-to-br from-blue-500 to-indigo-600'}`}>
-                              {initials}
-                            </div>
+                            <UserAvatar user={p} size="md" />
                             <span className="font-bold text-slate-800 dark:text-slate-200">{p.nom || 'Sans nom'}</span>
                           </div>
                         </td>
@@ -2359,7 +2368,7 @@ const DestinationsSettings = () => {
                   <div>
                     <div className="flex items-start justify-between gap-3 mb-2.5">
                       <div className="flex items-center gap-2.5 min-w-0">
-                        <span className="text-3xl filter drop-shadow-sm select-none shrink-0">{dest.emoji || '✈️'}</span>
+                        <CountryFlag emoji={dest.emoji} destinationName={dest.nom} className="w-8 h-6 rounded-xs shadow-xs" fallbackEmoji="✈️" />
                         <div className="min-w-0">
                           <h4 className="font-bold text-sm text-foreground truncate leading-snug">{dest.nom}</h4>
                           {dest.nom_ar && (

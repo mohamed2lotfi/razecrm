@@ -1,11 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Users, Calendar, Plane, Building2, Pencil, Loader2 } from 'lucide-react';
+import { Plus, Users, Calendar, Plane, Building2, Pencil, Trash2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import OmraGroupForm from './OmraGroupForm';
 
 const OmraGroupes = () => {
+  const { isAdmin } = useAuth();
   const [groupes, setGroupes] = useState([]);
   const [loading, setLoading] = useState(true);
   const [view, setView] = useState('list'); // 'list' | 'form'
@@ -49,6 +51,30 @@ const OmraGroupes = () => {
   const handleEdit = (group) => {
     setSelectedGroup(group);
     setView('form');
+  };
+
+  const handleDeleteGroup = async (groupId, groupNom) => {
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le groupe Omra "${groupNom}" ?\n\nTous les enregistrements, pèlerins et paiements associés seront supprimés.`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      await supabase.from('omra_paiements').delete().eq('groupe_id', groupId);
+      await supabase.from('omra_paiements_commissions').delete().eq('groupe_id', groupId);
+      await supabase.from('omra_enregistrements').delete().eq('groupe_id', groupId);
+      const { error } = await supabase.from('omra_groupes').delete().eq('id', groupId);
+      
+      if (error) {
+        alert("Erreur lors de la suppression du groupe : " + error.message);
+      } else {
+        setGroupes(prev => prev.filter(g => g.id !== groupId));
+      }
+    } catch (err) {
+      alert("Une erreur inattendue est survenue : " + err.message);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSave = async (group) => {
@@ -116,10 +142,21 @@ const OmraGroupes = () => {
             <Card key={group.id} className="overflow-hidden hover:shadow-md transition-shadow">
               <div className="h-2 bg-gradient-to-r from-emerald-400 to-emerald-600" />
               <CardHeader className="pb-3 relative">
-                <div className="absolute top-4 right-4">
-                  <Button variant="ghost" size="icon-sm" onClick={() => handleEdit(group)}>
+                <div className="absolute top-4 right-4 flex items-center gap-1">
+                  <Button variant="ghost" size="icon-sm" onClick={() => handleEdit(group)} title="Modifier">
                     <Pencil size={14} className="text-muted-foreground" />
                   </Button>
+                  {isAdmin && (
+                    <Button 
+                      variant="ghost" 
+                      size="icon-sm" 
+                      onClick={() => handleDeleteGroup(group.id, group.nom)} 
+                      title="Supprimer le groupe" 
+                      className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                    >
+                      <Trash2 size={14} />
+                    </Button>
+                  )}
                 </div>
                 <CardTitle className="text-lg flex items-center gap-2">
                   <Users size={18} className="text-emerald-600" /> {group.nom}

@@ -12,9 +12,10 @@ import {
   ChevronRight, ArrowUpDown, RefreshCw, UserCheck, 
   Baby, Utensils, Tag, CheckCircle2, Clock, AlertCircle,
   TrendingUp, Phone, Shield, Edit, Eye, Camera, Upload,
-  X, Check, AlertTriangle, FileText
+  X, Check, AlertTriangle, FileText, Trash2
 } from 'lucide-react';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 
 const CHAMBRE_KEYS = {
@@ -40,6 +41,7 @@ const calculateAge = (birthDateStr) => {
 };
 
 const Pelerins = () => {
+  const { isAdmin } = useAuth();
   const navigate = useNavigate();
 
   const [loading, setLoading] = useState(true);
@@ -440,6 +442,78 @@ const Pelerins = () => {
       alert("Erreur lors de l'enregistrement du pèlerin.");
     } finally {
       setIsSavingPelerin(false);
+    }
+  };
+
+  // Delete Pelerin (Admin only)
+  const handleDeletePelerin = async (p) => {
+    if (!p) return;
+    const targetName = p.fullName || p.nom;
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le pèlerin "${targetName}" du groupe "${p.groupeNom}" ?`)) {
+      return;
+    }
+
+    try {
+      setLoading(true);
+      const enr = enregistrements.find(e => e.id === p.enrId);
+      if (!enr) {
+        alert("Dossier d'enregistrement introuvable.");
+        setLoading(false);
+        return;
+      }
+
+      let updatedPelerins = [...(enr.pelerins || [])];
+      let updatedEnfants = [...(enr.enfants_sans_lit || [])];
+
+      if (p.isEnfantSansLit) {
+        updatedEnfants = updatedEnfants.filter(enf => {
+          if (p.pelerin_id && enf.pelerin_id) return enf.pelerin_id !== p.pelerin_id;
+          return enf.nom?.trim().toLowerCase() !== p.nom?.trim().toLowerCase();
+        });
+      } else {
+        updatedPelerins = updatedPelerins.filter(pel => {
+          if (p.pelerin_id && pel.pelerin_id) return pel.pelerin_id !== p.pelerin_id;
+          return pel.nom?.trim().toLowerCase() !== p.nom?.trim().toLowerCase();
+        });
+      }
+
+      if (updatedPelerins.length === 0 && updatedEnfants.length === 0) {
+        if (window.confirm(`Ce pèlerin est le seul occupant de son dossier. Supprimer l'enregistrement complet ainsi que ses paiements ?`)) {
+          await supabase.from('omra_paiements').delete().eq('enregistrement_id', p.enrId);
+          await supabase.from('omra_enregistrements').delete().eq('id', p.enrId);
+          if (p.pelerin_id) {
+            await supabase.from('pelerins').delete().eq('id', p.pelerin_id).then();
+          }
+          setIsModalOpen(false);
+          await fetchData();
+          return;
+        } else {
+          setLoading(false);
+          return;
+        }
+      }
+
+      const { error } = await supabase
+        .from('omra_enregistrements')
+        .update({
+          pelerins: updatedPelerins,
+          enfants_sans_lit: updatedEnfants
+        })
+        .eq('id', p.enrId);
+
+      if (error) {
+        alert("Erreur lors de la suppression : " + error.message);
+      } else {
+        if (p.pelerin_id) {
+          await supabase.from('pelerins').delete().eq('id', p.pelerin_id).then();
+        }
+        setIsModalOpen(false);
+        await fetchData();
+      }
+    } catch (err) {
+      alert("Une erreur inattendue est survenue : " + err.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1210,6 +1284,17 @@ const Pelerins = () => {
                             >
                               <ChevronRight size={15} />
                             </Button>
+                            {isAdmin && (
+                              <Button
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => handleDeletePelerin(p)}
+                                title="Supprimer ce pèlerin"
+                                className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            )}
                           </div>
                         </td>
                       </tr>
@@ -1457,33 +1542,50 @@ const Pelerins = () => {
                 </div>
 
                 {/* Modal Footer */}
-                <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setIsModalOpen(false)}
-                    disabled={isSavingPelerin}
-                    className="h-9 text-xs"
-                  >
-                    Annuler
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={isSavingPelerin}
-                    className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 shadow-sm"
-                  >
-                    {isSavingPelerin ? (
-                      <>
-                        <RefreshCw size={14} className="animate-spin" />
-                        Enregistrement...
-                      </>
-                    ) : (
-                      <>
-                        <Check size={14} />
-                        Enregistrer la Fiche
-                      </>
+                <div className="flex items-center justify-between gap-3 pt-3 border-t border-slate-100">
+                  <div>
+                    {isAdmin && selectedPelerin && (
+                      <Button
+                        type="button"
+                        variant="destructive"
+                        onClick={() => handleDeletePelerin(selectedPelerin)}
+                        disabled={isSavingPelerin}
+                        className="h-9 text-xs gap-1.5 font-bold"
+                        title="Supprimer ce pèlerin du groupe"
+                      >
+                        <Trash2 size={14} />
+                        Supprimer le pèlerin
+                      </Button>
                     )}
-                  </Button>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      onClick={() => setIsModalOpen(false)}
+                      disabled={isSavingPelerin}
+                      className="h-9 text-xs"
+                    >
+                      Annuler
+                    </Button>
+                    <Button
+                      type="submit"
+                      disabled={isSavingPelerin}
+                      className="h-9 text-xs bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-1.5 shadow-sm"
+                    >
+                      {isSavingPelerin ? (
+                        <>
+                          <RefreshCw size={14} className="animate-spin" />
+                          Enregistrement...
+                        </>
+                      ) : (
+                        <>
+                          <Check size={14} />
+                          Enregistrer la Fiche
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </div>
               </form>
             </div>
