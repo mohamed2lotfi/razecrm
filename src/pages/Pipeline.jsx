@@ -4,7 +4,8 @@ import {
   Plus, Phone, GripVertical, Loader2, LayoutGrid, List, Trash2, 
   XCircle, Calculator, Calendar, User, MapPin, Flame, Clock, 
   ArrowUpRight, Sparkles, Filter, ArrowUpDown, Search, X, UserCheck, Check,
-  TrendingUp, Send, CheckCircle2, ShieldAlert, ChevronRight, Eye, Briefcase
+  TrendingUp, Send, CheckCircle2, ShieldAlert, ChevronRight, Eye, Briefcase,
+  MessageCircle, Copy, PhoneCall, Zap, Edit3, ArrowRightLeft, ExternalLink, ShieldCheck, FileText
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '@/components/Layout';
@@ -12,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ProspectModal from '@/components/ProspectModal';
 import VenteForm from '@/components/VenteForm';
+import ClientDossierModal from '@/components/ClientDossierModal';
 import CountryFlag from '@/components/CountryFlag';
 import DestinationSelect from '@/components/DestinationSelect';
 import UserAvatar from '@/components/UserAvatar';
@@ -129,6 +131,12 @@ const Pipeline = () => {
   const [selectedOmraClientId, setSelectedOmraClientId] = useState(null);
   const navigate = useNavigate();
 
+  // ── RIGHT-CLICK CONTEXT MENU STATE ────────────────────────────────
+  const [contextMenu, setContextMenu] = useState(null); // { x: number, y: number, task: object }
+  const [toastMessage, setToastMessage] = useState(null);
+  const [dossierClient, setDossierClient] = useState(null);
+  const [isDossierModalOpen, setIsDossierModalOpen] = useState(false);
+
   const [columnsState, setColumnsState] = useState({
     nouvelle: [], en_cours: [], envoye: [], converti_vente: [], converti_omra: [], ferme: []
   });
@@ -138,6 +146,27 @@ const Pipeline = () => {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Listeners to close context menu on click outside, scroll, or escape
+  useEffect(() => {
+    const handleCloseMenu = () => setContextMenu(null);
+    const handleKeyDown = (e) => { if (e.key === 'Escape') setContextMenu(null); };
+
+    window.addEventListener('click', handleCloseMenu);
+    window.addEventListener('scroll', handleCloseMenu, true);
+    window.addEventListener('keydown', handleKeyDown);
+
+    return () => {
+      window.removeEventListener('click', handleCloseMenu);
+      window.removeEventListener('scroll', handleCloseMenu, true);
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, []);
+
+  const showToast = (text) => {
+    setToastMessage(text);
+    setTimeout(() => setToastMessage(null), 3000);
+  };
 
   const fetchData = async () => {
     setLoading(true);
@@ -284,10 +313,8 @@ const Pipeline = () => {
   };
 
   const handleSetList = async (colId, newList) => {
-    // Find items in newList whose status changed
     const movedItems = newList.filter(item => item.status !== colId);
     
-    // Update main pipelineData
     setPipelineData(prev => prev.map(p => {
       const moved = newList.find(item => item.id === p.id);
       if (moved && p.status !== colId) {
@@ -312,11 +339,12 @@ const Pipeline = () => {
   const handleCardClick = (p) => { setSelectedProspect(p); setIsNew(false); setIsModalOpen(true); };
   
   const handleDelete = async (e, id) => {
-    e.stopPropagation();
+    if (e) e.stopPropagation();
     if (window.confirm('Voulez-vous vraiment supprimer ce devis ?')) {
       const { error } = await supabase.from('pipeline').delete().eq('id', id);
       if (!error) {
         setPipelineData(prev => prev.filter(p => p.id !== id));
+        showToast("Devis supprimé avec succès");
       } else {
         alert("Erreur de suppression: " + error.message);
       }
@@ -325,30 +353,56 @@ const Pipeline = () => {
   
   const handleSave = async (prospectData) => {
     const id = prospectData.id;
-    const updateData = { ...prospectData };
-    delete updateData.id;
-    delete updateData.clients;
+
+    // S'assurer que nom_prospect n'est jamais null (contrainte NOT NULL SQL)
+    let computedNom = prospectData.nom_prospect;
+    if (!computedNom || !computedNom.trim()) {
+      if (prospectData.client_id) {
+        const foundClient = clientsList.find(c => c.id === prospectData.client_id);
+        computedNom = foundClient?.nom || 'Client';
+      } else {
+        computedNom = 'Client Prospect';
+      }
+    }
+
+    // Whitelist only real PostgreSQL columns of 'pipeline' (strip chosen, selected, clients, etc.)
+    const cleanPayload = {
+      nom_prospect: computedNom,
+      client_id: prospectData.client_id || null,
+      service_id: prospectData.service_id || null,
+      phone: prospectData.phone || null,
+      status: prospectData.status || 'nouvelle',
+      details_demande: prospectData.details_demande || '',
+      details_devis: prospectData.details_devis || '',
+      devis_ia: prospectData.devis_ia || ''
+    };
+
+    if (!id) {
+      cleanPayload.date_creation = prospectData.date_creation || new Date().toISOString();
+    }
 
     if (id) {
       const { data, error } = await supabase
         .from('pipeline')
-        .update(updateData)
+        .update(cleanPayload)
         .eq('id', id)
         .select('*, clients(*)');
       
       if (!error && data) {
         setPipelineData(prev => prev.map(p => p.id === id ? data[0] : p));
+        showToast("Devis mis à jour avec succès !");
       } else if (error) {
         alert("Erreur lors de la mise à jour: " + error.message);
       }
     } else {
       const { data, error } = await supabase
         .from('pipeline')
-        .insert([updateData])
+        .insert([cleanPayload])
         .select('*, clients(*)');
       
       if (!error && data) {
         setPipelineData(prev => [data[0], ...prev]);
+        showToast("Nouveau devis créé avec succès !");
       } else if (error) {
         alert("Erreur lors de la création: " + error.message);
       }
@@ -405,25 +459,105 @@ const Pipeline = () => {
     }
   };
 
+  // ── RIGHT CLICK CONTEXT MENU HANDLERS ─────────────────────────────
+  const handleContextMenu = (e, task) => {
+    e.preventDefault();
+    e.stopPropagation();
+
+    const menuWidth = 260;
+    const menuHeight = 440;
+    const x = Math.min(e.clientX, window.innerWidth - menuWidth - 12);
+    const y = Math.min(e.clientY, window.innerHeight - menuHeight - 12);
+
+    setContextMenu({ x, y, task });
+  };
+
+  const handleQuickStatusChange = async (task, targetStatus) => {
+    setContextMenu(null);
+    setPipelineData(prev => prev.map(p => p.id === task.id ? { ...p, status: targetStatus } : p));
+    
+    await supabase.from('pipeline').update({ status: targetStatus }).eq('id', task.id);
+    showToast(`Statut mis à jour : ${targetStatus}`);
+
+    if (targetStatus === 'converti_vente') {
+      setPendingVenteClient(task.client_id || null);
+    } else if (targetStatus === 'converti_omra') {
+      setSelectedOmraClientId(task.client_id || null);
+      setOmraModalOpen(true);
+    }
+  };
+
+  const handleQuickPriorityChange = async (task, newPriority) => {
+    setContextMenu(null);
+    let detailsObj = {};
+    try {
+      if (task.details_devis && task.details_devis.trim().startsWith('{')) {
+        detailsObj = JSON.parse(task.details_devis);
+      }
+    } catch {}
+
+    detailsObj.priorite = newPriority;
+    const updatedDetails = JSON.stringify(detailsObj);
+
+    setPipelineData(prev => prev.map(p => p.id === task.id ? { ...p, details_devis: updatedDetails } : p));
+    await supabase.from('pipeline').update({ details_devis: updatedDetails }).eq('id', task.id);
+    showToast(`Priorité : ${newPriority}`);
+  };
+
+  const handleCopyText = (text, message = 'Copié dans le presse-papier !') => {
+    if (navigator?.clipboard?.writeText) {
+      navigator.clipboard.writeText(text);
+    } else {
+      const el = document.createElement('textarea');
+      el.value = text;
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand('copy');
+      document.body.removeChild(el);
+    }
+    showToast(message);
+    setContextMenu(null);
+  };
+
+  const handleOpenWhatsApp = (phone, task) => {
+    setContextMenu(null);
+    let cleanPhone = (phone || task.phone || task.clients?.telephone || '').replace(/[^0-9]/g, '');
+    if (cleanPhone.startsWith('0')) cleanPhone = '213' + cleanPhone.substring(1);
+    if (!cleanPhone) {
+      alert("Aucun numéro de téléphone renseigné pour ce client.");
+      return;
+    }
+    const meta = getQuoteMeta(task);
+    const msg = encodeURIComponent(`Bonjour, concernant votre devis pour ${meta.destination || 'votre voyage'}...`);
+    window.open(`https://wa.me/${cleanPhone}?text=${msg}`, '_blank');
+  };
+
+  const handleOpenClientDossier = (task) => {
+    setContextMenu(null);
+    const client = task.clients || clientsList.find(c => c.id === task.client_id);
+    if (client) {
+      setDossierClient(client);
+      setIsDossierModalOpen(true);
+    } else {
+      alert("Aucune fiche client trouvée pour ce devis.");
+    }
+  };
+
   // Render Kanban Task Card with Double-Bezel Hardware aesthetic
   const renderTaskCard = (task, col) => {
     const meta = getQuoteMeta(task);
     const prio = getPriorityBadge(meta.priorite);
     const clientName = task.clients?.nom || task.nom_prospect || 'Client inconnu';
-    const clientPhone = task.clients?.telephone || '';
+    const clientPhone = task.clients?.telephone || task.phone || '';
     const creationDate = task.date_creation ? new Date(task.date_creation).toLocaleDateString('fr-FR') : '';
     const relativeTime = getRelativeTime(task.date_creation);
-    
-    // Agent avatar initials
-    const agentInitials = meta.agent_nom 
-      ? meta.agent_nom.split(' ').map(n => n[0]).join('').substring(0, 2).toUpperCase() 
-      : 'AG';
 
     return (
       <div
         key={task.id}
         onClick={() => handleCardClick(task)}
-        className="group relative p-1 mb-2.5 rounded-2xl bg-gradient-to-b from-muted/70 to-muted/20 border border-border/70 hover:border-primary/50 hover:shadow-md transition-all duration-200 cursor-grab active:cursor-grabbing hover:-translate-y-0.5"
+        onContextMenu={(e) => handleContextMenu(e, task)}
+        className="group relative p-1 mb-2.5 rounded-2xl bg-gradient-to-b from-muted/70 to-muted/20 border border-border/70 hover:border-primary/50 hover:shadow-md transition-all duration-200 cursor-grab active:cursor-grabbing hover:-translate-y-0.5 select-none"
       >
         {/* Inner Card Core */}
         <div className="p-3 bg-card rounded-[14px] border border-border/40 shadow-xs space-y-2.5">
@@ -468,7 +602,6 @@ const Pipeline = () => {
 
           {/* Bottom Row: Date & Agent Indicator */}
           <div className="flex items-center justify-between pt-2 border-t border-border/50 text-[10px] text-muted-foreground">
-            {/* Date + Relative time */}
             <div className="flex items-center gap-1 font-medium">
               <Calendar size={10} className="text-muted-foreground/60" />
               <span>{creationDate}</span>
@@ -502,7 +635,7 @@ const Pipeline = () => {
     );
   };
 
-  // Render Mini Task Card for Vente & Omra sub-zones (showing only client name)
+  // Render Mini Task Card for Vente & Omra sub-zones
   const renderMiniTaskCard = (task, type = 'vente') => {
     const clientName = task.clients?.nom || task.nom_prospect || 'Client inconnu';
     const isVente = type === 'vente';
@@ -511,8 +644,9 @@ const Pipeline = () => {
       <div
         key={task.id}
         onClick={() => handleCardClick(task)}
+        onContextMenu={(e) => handleContextMenu(e, task)}
         className={cn(
-          "group relative p-2 mb-1.5 rounded-xl border transition-all duration-200 cursor-grab active:cursor-grabbing hover:-translate-y-0.5 hover:shadow-xs flex items-center justify-between gap-1.5",
+          "group relative p-2 mb-1.5 rounded-xl border transition-all duration-200 cursor-grab active:cursor-grabbing hover:-translate-y-0.5 hover:shadow-xs flex items-center justify-between gap-1.5 select-none",
           isVente
             ? "bg-card hover:bg-emerald-500/10 border-emerald-500/30 text-foreground"
             : "bg-card hover:bg-violet-500/10 border-violet-500/30 text-foreground"
@@ -538,6 +672,14 @@ const Pipeline = () => {
 
   return (
     <Layout>
+      {/* Toast Notification */}
+      {toastMessage && (
+        <div className="fixed bottom-6 right-6 z-50 px-4 py-2.5 rounded-xl bg-slate-900 text-white border border-slate-700 text-xs font-bold shadow-2xl flex items-center gap-2 animate-in slide-in-from-bottom-3 backdrop-blur-md">
+          <CheckCircle2 size={15} className="text-emerald-400" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
       {/* ── Page Header & KPI Summary ────────────────────────────────────────── */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6">
         <div>
@@ -551,7 +693,7 @@ const Pipeline = () => {
             </span>
           </div>
           <p className="text-xs text-muted-foreground mt-1">
-            Gérez vos demandes de devis, opportunités commerciales et conversions de ventes en temps réel.
+            Gérez vos demandes de devis, opportunités commerciales et conversions de ventes en temps réel. Clic droit pour le menu rapide.
           </p>
         </div>
 
@@ -587,207 +729,169 @@ const Pipeline = () => {
             </button>
           </div>
 
-          {/* Simulateur Button */}
-          <Button 
-            variant="outline" 
-            onClick={() => navigate('/simulateur-devis')} 
-            className="h-9 gap-1.5 border-emerald-500/30 bg-emerald-50/70 text-emerald-800 hover:bg-emerald-100 dark:bg-emerald-950/30 dark:text-emerald-300 font-bold text-xs shadow-2xs"
-          >
-            <Calculator size={14} className="text-emerald-600 dark:text-emerald-400" />
-            <span>Simulateur</span>
-          </Button>
-
-          {/* Nouveau Devis Button (Button-in-Button architecture) */}
           <Button 
             onClick={handleCreate} 
-            className="h-9 font-extrabold text-xs pl-3.5 pr-2.5 gap-2 shadow-md hover:shadow-lg transition-all"
+            className="font-bold text-xs h-10 px-5 gap-2 shadow-sm rounded-xl"
           >
+            <Plus size={16} /> 
             <span>Nouveau Devis</span>
-            <span className="w-5 h-5 rounded-full bg-white/20 flex items-center justify-center shrink-0">
-              <Plus size={13} />
-            </span>
           </Button>
         </div>
       </div>
 
-      {/* ── KPI Quick Strip ─────────────────────────────────────────────────── */}
-      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
-        <div className="p-3 bg-card/60 border rounded-2xl shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Total Devis</p>
-            <p className="text-lg font-black text-foreground">{metrics.total}</p>
+      {/* ── KPI Metrics Cards Row ────────────────────────────────────────────── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3.5 mb-6">
+        <div className="p-4 rounded-2xl bg-card border border-border/80 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center font-black">
+            <FileText size={18} />
           </div>
-          <div className="w-8 h-8 rounded-xl bg-blue-500/10 text-blue-600 flex items-center justify-center font-bold text-xs">
-            📋
+          <div>
+            <div className="text-xl font-black text-foreground">{metrics.total}</div>
+            <div className="text-[11px] font-bold text-muted-foreground">Total Devis</div>
           </div>
         </div>
 
-        <div className="p-3 bg-card/60 border rounded-2xl shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">En Traitement</p>
-            <p className="text-lg font-black text-amber-600 dark:text-amber-400">{metrics.enCours}</p>
+        <div className="p-4 rounded-2xl bg-card border border-border/80 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center font-black">
+            <Clock size={18} />
           </div>
-          <div className="w-8 h-8 rounded-xl bg-amber-500/10 text-amber-600 flex items-center justify-center font-bold text-xs">
-            ⏳
+          <div>
+            <div className="text-xl font-black text-foreground">{metrics.enCours}</div>
+            <div className="text-[11px] font-bold text-muted-foreground">En Traitement</div>
           </div>
         </div>
 
-        <div className="p-3 bg-card/60 border rounded-2xl shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Devis Envoyés</p>
-            <p className="text-lg font-black text-violet-600 dark:text-violet-400">{metrics.envoye}</p>
+        <div className="p-4 rounded-2xl bg-card border border-border/80 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-violet-500/10 text-violet-600 dark:text-violet-400 flex items-center justify-center font-black">
+            <Send size={18} />
           </div>
-          <div className="w-8 h-8 rounded-xl bg-violet-500/10 text-violet-600 flex items-center justify-center font-bold text-xs">
-            🚀
+          <div>
+            <div className="text-xl font-black text-foreground">{metrics.envoye}</div>
+            <div className="text-[11px] font-bold text-muted-foreground">Devis Envoyés</div>
           </div>
         </div>
 
-        <div className="p-3 bg-card/60 border rounded-2xl shadow-2xs flex items-center justify-between">
-          <div>
-            <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-wider">Conversion</p>
-            <p className="text-lg font-black text-emerald-600 dark:text-emerald-400">{metrics.conversionRate}%</p>
+        <div className="p-4 rounded-2xl bg-card border border-border/80 shadow-xs flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 flex items-center justify-center font-black">
+            <TrendingUp size={18} />
           </div>
-          <div className="w-8 h-8 rounded-xl bg-emerald-500/10 text-emerald-600 flex items-center justify-center font-bold text-xs">
-            💎
+          <div>
+            <div className="text-xl font-black text-emerald-600 dark:text-emerald-400 flex items-center gap-1.5">
+              <span>{metrics.convertis}</span>
+              <span className="text-xs font-bold text-muted-foreground">({metrics.conversionRate}%)</span>
+            </div>
+            <div className="text-[11px] font-bold text-muted-foreground">Ventes Conclues</div>
           </div>
         </div>
       </div>
 
-      {/* ── Filters & Sorting Toolbar (Comfortable, Modern, No Truncation) ─────────────────── */}
-      <div className="bg-card/80 backdrop-blur-md rounded-2xl border border-border/80 p-3.5 shadow-2xs space-y-3 mb-6">
-        <div className="flex flex-col xl:flex-row xl:items-center justify-between gap-3">
-          {/* Left: Quick Search & "Mes devis" Toggle */}
-          <div className="flex flex-wrap items-center gap-2.5 flex-1 min-w-[280px]">
-            {/* Search Input */}
-            <div className="relative flex-1 min-w-[200px] max-w-sm">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground/70" />
-              <Input
-                placeholder="Rechercher devis, client, agent, destination..."
-                value={searchTerm}
-                onChange={e => setSearchTerm(e.target.value)}
-                className="h-9 pl-9 pr-8 text-xs bg-background border-border/80 rounded-xl font-medium focus-visible:ring-primary/20"
-              />
-              {searchTerm && (
-                <button
-                  type="button"
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
-                >
-                  <X size={13} />
-                </button>
-              )}
-            </div>
-
-            {/* Toggle "Mes devis" */}
-            <button
-              type="button"
-              onClick={() => setFilterMyQuotes(prev => !prev)}
-              className={cn(
-                "h-9 px-3.5 rounded-xl text-xs font-bold transition-all duration-200 flex items-center gap-2 border shrink-0",
-                filterMyQuotes
-                  ? "bg-primary text-primary-foreground border-primary shadow-xs"
-                  : "bg-background text-foreground/80 hover:bg-muted/50 border-border/80"
-              )}
-            >
-              <User size={14} className={filterMyQuotes ? "text-primary-foreground" : "text-muted-foreground"} />
-              <span>Mes devis</span>
-              <span className={cn(
-                "text-[10px] px-1.5 py-0.2 rounded-full font-black",
-                filterMyQuotes ? "bg-white/20 text-white" : "bg-muted text-muted-foreground"
-              )}>
-                {myQuotesCount}
-              </span>
-            </button>
-          </div>
-
-          {/* Right: Dropdown Filters & Sorting (Comfortable min-widths) */}
-          <div className="flex flex-wrap items-center gap-2.5">
-            {/* Filter Date */}
-            <div className="min-w-[145px] flex-1 sm:flex-initial">
-              <Select
-                value={filterDate}
-                onChange={e => setFilterDate(e.target.value)}
-                className="h-9 text-xs bg-background border-border/80 rounded-xl font-semibold px-3 pr-7"
+      {/* ── Filters & Search Toolbar (Strict Single Line) ─────────────────────────── */}
+      <div className="bg-card p-2 sm:p-2.5 rounded-2xl border border-border/80 shadow-xs mb-6 overflow-x-auto">
+        <div className="flex items-center gap-2 min-w-max lg:min-w-0 w-full flex-nowrap">
+          
+          {/* Search bar (Flexible) */}
+          <div className="relative flex-1 min-w-[200px]">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              placeholder="Rechercher devis, client, destination..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="pl-8.5 pr-7 h-8.5 text-xs bg-muted/40 rounded-xl border-border/80"
+            />
+            {searchTerm && (
+              <button 
+                type="button"
+                onClick={() => setSearchTerm('')} 
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-0.5"
               >
-                <option value="all">📅 Toutes les dates</option>
-                <option value="today">📅 Aujourd'hui</option>
-                <option value="week">📅 7 derniers jours</option>
-                <option value="month">📅 30 derniers jours</option>
-              </Select>
-            </div>
-
-            {/* Filter Priorité */}
-            <div className="min-w-[145px] flex-1 sm:flex-initial">
-              <Select
-                value={filterPriority}
-                onChange={e => setFilterPriority(e.target.value)}
-                className="h-9 text-xs bg-background border-border/80 rounded-xl font-semibold px-3 pr-7"
-              >
-                <option value="all">⚡ Toute priorité</option>
-                <option value="Urgente">🔥 Urgente</option>
-                <option value="Haute">⚡ Haute</option>
-                <option value="Moyenne">🔹 Moyenne</option>
-                <option value="Basse">⚪ Basse</option>
-              </Select>
-            </div>
-
-            {/* Filter Destination (with real country flags) */}
-            <div className="min-w-[170px] flex-1 sm:flex-initial">
-              <DestinationSelect
-                value={filterDestination}
-                onChange={(nom) => setFilterDestination(nom)}
-                destinations={destinationsList}
-                placeholder="🌍 Destinations"
-                allowAll={true}
-                mode="name"
-              />
-            </div>
-
-            {/* Trie / Sort Order */}
-            <div className="min-w-[185px] flex-1 sm:flex-initial">
-              <Select
-                value={sortBy}
-                onChange={e => setSortBy(e.target.value)}
-                className="h-9 text-xs bg-primary/5 border-primary/30 rounded-xl font-bold text-primary px-3 pr-7"
-              >
-                <option value="date_desc">📅 Date : Plus récents</option>
-                <option value="date_asc">📅 Date : Plus anciens</option>
-                <option value="prio_desc">⚡ Priorité : Urgente ➔ Basse</option>
-                <option value="prio_asc">⚡ Priorité : Basse ➔ Urgente</option>
-              </Select>
-            </div>
-
-            {/* Reset Button */}
-            {hasActiveFilters && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={handleResetFilters}
-                className="h-9 text-xs text-muted-foreground hover:text-destructive hover:bg-destructive/10 font-bold gap-1 px-3 rounded-xl shrink-0"
-                title="Effacer tous les filtres"
-              >
-                <X size={13} /> Réinitialiser
-              </Button>
+                <X size={12} />
+              </button>
             )}
           </div>
+
+          {/* Toggle: Mes Devis */}
+          <button
+            type="button"
+            onClick={() => setFilterMyQuotes(p => !p)}
+            className={cn(
+              "h-8.5 px-3 text-xs font-bold rounded-xl border transition-all flex items-center gap-1.5 shadow-2xs shrink-0 whitespace-nowrap",
+              filterMyQuotes 
+                ? "bg-primary text-primary-foreground border-primary" 
+                : "bg-background text-muted-foreground hover:text-foreground border-border hover:bg-muted/40"
+            )}
+          >
+            <User size={12} />
+            <span>Mes devis ({myQuotesCount})</span>
+          </button>
+
+          {/* Filter: Priorité */}
+          <Select 
+            value={filterPriority} 
+            onChange={e => setFilterPriority(e.target.value)}
+            className="h-8.5 text-xs bg-background rounded-xl border-border w-[125px] shrink-0"
+          >
+            <option value="all">Priorité : Tous</option>
+            <option value="Urgente">🔥 Urgente</option>
+            <option value="Haute">⚡ Haute</option>
+            <option value="Moyenne">🔹 Moyenne</option>
+            <option value="Basse">⚪ Basse</option>
+          </Select>
+
+          {/* Filter: Date */}
+          <Select 
+            value={filterDate} 
+            onChange={e => setFilterDate(e.target.value)}
+            className="h-8.5 text-xs bg-background rounded-xl border-border w-[120px] shrink-0"
+          >
+            <option value="all">Date : Toutes</option>
+            <option value="today">Aujourd'hui</option>
+            <option value="week">7 derniers jours</option>
+            <option value="month">30 derniers jours</option>
+          </Select>
+
+          {/* Sort By */}
+          <Select 
+            value={sortBy} 
+            onChange={e => setSortBy(e.target.value)}
+            className="h-8.5 text-xs bg-background rounded-xl border-border w-[130px] shrink-0"
+          >
+            <option value="date_desc">📅 Plus récents</option>
+            <option value="date_asc">📅 Plus anciens</option>
+            <option value="prio_desc">🔥 Priorité max</option>
+            <option value="prio_asc">⚪ Priorité min</option>
+          </Select>
+
+          {/* Reset Filters */}
+          {hasActiveFilters && (
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleResetFilters}
+              className="h-8.5 px-2.5 text-xs text-muted-foreground hover:text-foreground shrink-0 whitespace-nowrap"
+              title="Effacer tous les filtres"
+            >
+              <X size={12} className="mr-1" />
+              <span>Effacer</span>
+            </Button>
+          )}
         </div>
       </div>
 
-      {/* ── Main View (Kanban or Table) ───────────────────────────────────────── */}
+      {/* ── Main View: Kanban Board or List ──────────────────────────────────── */}
       {loading ? (
-        <div className="flex flex-col justify-center items-center h-64 gap-3">
-          <Loader2 className="animate-spin text-primary" size={36} />
-          <p className="text-xs font-semibold text-muted-foreground animate-pulse">Chargement du pipeline...</p>
+        <div className="flex flex-col items-center justify-center p-16 space-y-3">
+          <Loader2 className="animate-spin text-primary" size={32} />
+          <span className="text-xs text-muted-foreground font-medium">Chargement du pipeline...</span>
         </div>
       ) : viewMode === 'kanban' ? (
-        /* Kanban Board View (Fixed 100vh height with internal column scrolling) */
-        <div className="flex gap-4 pb-2 overflow-x-auto h-[calc(100vh-275px)] min-h-[460px] select-none">
+        /* Kanban Board Horizontal Layout */
+        <div className="flex gap-4 overflow-x-auto pb-6 pt-1 items-start h-[calc(100vh-320px)] min-h-[480px]">
           {COLUMNS.map(col => {
             const kpi = getColumnKPI(col.id);
 
             return (
               <div key={col.id} className="flex flex-col w-[300px] min-w-[300px] max-w-[300px] h-full flex-shrink-0 rounded-2xl bg-muted/30 border border-border/70 p-2.5 overflow-hidden">
-                {/* Column Header (Fixed Pinned at Top) */}
+                {/* Column Header */}
                 <div className="p-3 pb-2 mb-2 rounded-xl bg-card border border-border/40 shadow-2xs space-y-1.5 shrink-0">
                   <div className="flex items-center justify-between">
                     <div className="flex items-center gap-2">
@@ -809,7 +913,7 @@ const Pipeline = () => {
                   )}
                 </div>
 
-                {/* Split Column (Conversion Vente & Omra) with independent inner scroll */}
+                {/* Split Column (Conversion Vente & Omra) */}
                 {col.isSplit ? (
                   <div className="flex-1 min-h-0 flex flex-col gap-2.5 overflow-hidden">
                     {/* Vente Sub-Zone */}
@@ -838,7 +942,6 @@ const Pipeline = () => {
                           ).map(task => renderMiniTaskCard(task, 'vente'))}
                         </ReactSortable>
 
-                        {/* + n ventes card */}
                         {(columnsState['converti_vente']?.length || 0) > 4 && (
                           <button
                             type="button"
@@ -884,7 +987,6 @@ const Pipeline = () => {
                           ).map(task => renderMiniTaskCard(task, 'omra'))}
                         </ReactSortable>
 
-                        {/* + n ventes omra card */}
                         {(columnsState['converti_omra']?.length || 0) > 4 && (
                           <button
                             type="button"
@@ -905,7 +1007,7 @@ const Pipeline = () => {
                     </div>
                   </div>
                 ) : (
-                  /* Standard Column Sortable with inner vertical scroll */
+                  /* Standard Column Sortable */
                   <ReactSortable
                     list={columnsState[col.id] || []}
                     setList={(newList) => handleSetList(col.id, newList)}
@@ -954,7 +1056,8 @@ const Pipeline = () => {
                     <tr 
                       key={task.id} 
                       onClick={() => handleCardClick(task)} 
-                      className="hover:bg-muted/40 cursor-pointer transition-colors group"
+                      onContextMenu={(e) => handleContextMenu(e, task)}
+                      className="hover:bg-muted/40 cursor-pointer transition-colors group select-none"
                     >
                       <td className="px-6 py-4 font-bold text-foreground group-hover:text-primary transition-colors">
                         {meta.nom_devis}
@@ -1039,6 +1142,163 @@ const Pipeline = () => {
         </div>
       )}
 
+      {/* ── FLOATING RIGHT-CLICK CONTEXT MENU (DROPDOWN INTERNE) ─────────────── */}
+      {contextMenu && (() => {
+        const { task, x, y } = contextMenu;
+        const meta = getQuoteMeta(task);
+        const clientName = task.clients?.nom || task.nom_prospect || 'Client';
+        const clientPhone = task.clients?.telephone || task.phone || '';
+
+        return (
+          <div
+            style={{ top: `${y}px`, left: `${x}px` }}
+            onClick={(e) => e.stopPropagation()}
+            className="fixed z-50 w-64 rounded-2xl bg-slate-900/95 dark:bg-slate-900/98 text-white border border-slate-700/80 shadow-2xl backdrop-blur-xl p-1.5 animate-in fade-in zoom-in-95 duration-150 select-none text-xs space-y-1 font-medium"
+          >
+            {/* Header Preview */}
+            <div className="px-3 py-2 border-b border-slate-800 space-y-0.5">
+              <div className="flex items-center justify-between gap-1">
+                <span className="font-black text-white truncate text-xs">{meta.nom_devis}</span>
+                <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-slate-800 text-slate-300 border border-slate-700">
+                  {meta.priorite}
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 truncate flex items-center gap-1">
+                <User size={10} className="text-emerald-400" />
+                <span>{clientName}</span>
+                {clientPhone && <span className="font-mono text-[10px]">({clientPhone})</span>}
+              </p>
+            </div>
+
+            {/* Main Actions */}
+            <div className="space-y-0.5 pt-1">
+              <button
+                type="button"
+                onClick={() => { setContextMenu(null); handleCardClick(task); }}
+                className="w-full px-2.5 py-1.5 rounded-xl hover:bg-emerald-600 text-slate-200 hover:text-white flex items-center gap-2 transition-colors text-left font-bold"
+              >
+                <Edit3 size={13} className="text-emerald-400" />
+                <span>Ouvrir / Modifier le Devis</span>
+              </button>
+
+              {clientPhone && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenWhatsApp(clientPhone, task)}
+                  className="w-full px-2.5 py-1.5 rounded-xl hover:bg-emerald-600 text-slate-200 hover:text-white flex items-center gap-2 transition-colors text-left"
+                >
+                  <MessageCircle size={13} className="text-emerald-400" />
+                  <span>Contacter sur WhatsApp</span>
+                </button>
+              )}
+
+              {clientPhone && (
+                <button
+                  type="button"
+                  onClick={() => handleCopyText(clientPhone, `N° ${clientPhone} copié !`)}
+                  className="w-full px-2.5 py-1.5 rounded-xl hover:bg-slate-800 text-slate-300 hover:text-white flex items-center gap-2 transition-colors text-left"
+                >
+                  <Copy size={13} className="text-slate-400" />
+                  <span>Copier Téléphone ({clientPhone})</span>
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => handleCopyText(meta.nom_devis, 'Titre du devis copié !')}
+                className="w-full px-2.5 py-1.5 rounded-xl hover:bg-slate-800 text-slate-300 hover:text-white flex items-center gap-2 transition-colors text-left"
+              >
+                <Copy size={13} className="text-slate-400" />
+                <span>Copier Titre du Devis</span>
+              </button>
+
+              {(task.client_id || task.clients) && (
+                <button
+                  type="button"
+                  onClick={() => handleOpenClientDossier(task)}
+                  className="w-full px-2.5 py-1.5 rounded-xl hover:bg-slate-800 text-slate-300 hover:text-white flex items-center gap-2 transition-colors text-left"
+                >
+                  <ExternalLink size={13} className="text-blue-400" />
+                  <span>Voir Fiche Client 360°</span>
+                </button>
+              )}
+            </div>
+
+            {/* Quick Priority Sub-Section */}
+            <div className="pt-1.5 border-t border-slate-800/80 px-2 space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Changer Priorité
+              </span>
+              <div className="grid grid-cols-2 gap-1">
+                {[
+                  { id: 'Urgente', label: '🔥 Urgente' },
+                  { id: 'Haute', label: '⚡ Haute' },
+                  { id: 'Moyenne', label: '🔹 Moyenne' },
+                  { id: 'Basse', label: '⚪ Basse' }
+                ].map(p => (
+                  <button
+                    key={p.id}
+                    type="button"
+                    onClick={() => handleQuickPriorityChange(task, p.id)}
+                    className={cn(
+                      "px-2 py-1 rounded-lg text-[10px] font-bold text-left transition-colors border",
+                      meta.priorite === p.id 
+                        ? "bg-emerald-950/60 text-emerald-300 border-emerald-500/40" 
+                        : "bg-slate-800/60 hover:bg-slate-800 text-slate-300 border-slate-700/50"
+                    )}
+                  >
+                    {p.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Quick Status Sub-Section */}
+            <div className="pt-1.5 border-t border-slate-800/80 px-2 space-y-1">
+              <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                Déplacer vers
+              </span>
+              <div className="grid grid-cols-2 gap-1">
+                {[
+                  { id: 'nouvelle', label: '🔵 Demande' },
+                  { id: 'en_cours', label: '🟡 En cours' },
+                  { id: 'envoye', label: '🟣 Envoyé' },
+                  { id: 'converti_vente', label: '🟢 Vente' },
+                  { id: 'converti_omra', label: '🕋 Omra' },
+                  { id: 'ferme', label: '🔴 Fermé' }
+                ].map(s => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => handleQuickStatusChange(task, s.id)}
+                    className={cn(
+                      "px-2 py-1 rounded-lg text-[10px] font-bold text-left transition-colors border",
+                      task.status === s.id 
+                        ? "bg-primary/20 text-primary-foreground border-primary/40" 
+                        : "bg-slate-800/60 hover:bg-slate-800 text-slate-300 border-slate-700/50"
+                    )}
+                  >
+                    {s.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* Delete Action */}
+            <div className="pt-1.5 border-t border-slate-800/80">
+              <button
+                type="button"
+                onClick={(e) => { setContextMenu(null); handleDelete(e, task.id); }}
+                className="w-full px-2.5 py-1.5 rounded-xl hover:bg-rose-950/80 text-rose-300 hover:text-rose-200 flex items-center gap-2 transition-colors text-left font-bold"
+              >
+                <Trash2 size={13} className="text-rose-400" />
+                <span>Supprimer ce Devis</span>
+              </button>
+            </div>
+          </div>
+        );
+      })()}
+
       {/* ── Modals & Dialogs ────────────────────────────────────────────────── */}
       <ProspectModal 
         isOpen={isModalOpen} 
@@ -1050,6 +1310,18 @@ const Pipeline = () => {
         clientsList={clientsList} 
       />
 
+      {isDossierModalOpen && dossierClient && (
+        <ClientDossierModal
+          isOpen={isDossierModalOpen}
+          onClose={() => setIsDossierModalOpen(false)}
+          client={dossierClient}
+          onOpenDevis={(devis) => {
+            setIsDossierModalOpen(false);
+            handleCardClick(devis);
+          }}
+        />
+      )}
+
       {pendingVenteClient !== null && (() => {
         const c = clientsList.find(c => c.id === pendingVenteClient);
         return (
@@ -1060,6 +1332,7 @@ const Pipeline = () => {
               const { error } = await supabase.from('ventes').insert([venteData]);
               if (!error) {
                 setPendingVenteClient(null);
+                showToast("Vente créée avec succès !");
               } else {
                 alert("Erreur lors de la création de la vente : " + error.message);
               }

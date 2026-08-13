@@ -20,6 +20,7 @@ import EmailMarketing from '@/pages/EmailMarketing';
 import Packages from '@/pages/Packages';
 import SimulateurDevis from '@/pages/SimulateurDevis';
 import Profile from '@/pages/Profile';
+import WebsiteManagement from '@/pages/WebsiteManagement';
 
 const RoleRoute = ({ children, allowedRoles = ['admin', 'agent'] }) => {
   const { session, role } = useAuth();
@@ -60,6 +61,7 @@ function App() {
           <Route path="/visas" element={<RoleRoute allowedRoles={['admin', 'agent']}><Visas /></RoleRoute>} />
           <Route path="/banque-contacts" element={<RoleRoute allowedRoles={['admin', 'agent']}><BanqueContacts /></RoleRoute>} />
           <Route path="/marketing" element={<RoleRoute allowedRoles={['admin', 'agent']}><EmailMarketing /></RoleRoute>} />
+          <Route path="/website" element={<RoleRoute allowedRoles={['admin', 'agent']}><WebsiteManagement /></RoleRoute>} />
           
           {/* Routes Administratives & Financières (Admin Uniquement) */}
           <Route path="/outcomes" element={<RoleRoute allowedRoles={['admin']}><Outcomes /></RoleRoute>} />

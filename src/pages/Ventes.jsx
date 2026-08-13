@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Plus, CreditCard, FileText, FileDown, Trash2, TrendingUp, BarChart3, Coins, ClipboardList, Loader2, Pencil, Search, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, CreditCard, FileText, FileDown, Trash2, TrendingUp, BarChart3, Coins, ClipboardList, Loader2, Pencil, Search, ChevronLeft, ChevronRight, Eye, Layers, Globe } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -9,6 +9,7 @@ import { Select } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import VenteForm from '@/components/VenteForm';
 import FactureForm from '@/components/FactureForm';
+import CountryFlag from '@/components/CountryFlag';
 import { format, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, startOfYear, endOfYear, startOfDay, endOfDay, isWithinInterval } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { supabase } from '@/lib/supabase';
@@ -35,6 +36,7 @@ const Ventes = () => {
 
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingVente, setEditingVente] = useState(null);
+  const [viewingArticlesVente, setViewingArticlesVente] = useState(null);
   const [invoiceModal, setInvoiceModal] = useState({ isOpen: false, transaction: null, type: null });
 
   const [isReportOpen, setIsReportOpen] = useState(false);
@@ -121,8 +123,24 @@ const Ventes = () => {
     // Separate visa metadata and id from DB fields
     const { _visaMeta: visaMeta, id, ...newVenteData } = rawData;
 
+    const cleanedPayload = {
+      ...newVenteData,
+      client_id: newVenteData.client_id || null,
+      service_id: newVenteData.service_id || null,
+      fournisseur_id: newVenteData.fournisseur_id || null,
+    };
+
     if (id) {
-      const { data, error } = await supabase.from('ventes').update(newVenteData).eq('id', id).select();
+      let { data, error } = await supabase.from('ventes').update(cleanedPayload).eq('id', id).select();
+      
+      // Fallback if articles or destination column does not exist in schema cache yet
+      if (error && error.message) {
+        const { articles: _art, destination: _dest, ...fallbackData } = cleanedPayload;
+        const retry = await supabase.from('ventes').update(fallbackData).eq('id', id).select();
+        data = retry.data;
+        error = retry.error;
+      }
+
       if (error) {
         console.error("Update error:", error);
         alert(`Erreur: ${error.message}`);
@@ -133,7 +151,16 @@ const Ventes = () => {
         setEditingVente(null);
       }
     } else {
-      const { data, error } = await supabase.from('ventes').insert([newVenteData]).select();
+      let { data, error } = await supabase.from('ventes').insert([cleanedPayload]).select();
+
+      // Fallback if articles or destination column does not exist in schema cache yet
+      if (error && error.message) {
+        const { articles: _art, destination: _dest, ...fallbackData } = cleanedPayload;
+        const retry = await supabase.from('ventes').insert([fallbackData]).select();
+        data = retry.data;
+        error = retry.error;
+      }
+
       if (error) {
         console.error("Insert error:", error);
         alert(`Erreur: ${error.message}`);
@@ -201,15 +228,23 @@ const Ventes = () => {
       numero = `${nextNum}/${year}`;
     }
 
-    // Prepare line items
-    const items = [
-      {
-        description: data.details || 'Prestation de service',
-        quantite: 1,
-        prix_unitaire: parseFloat(data.total) || 0,
-        total: parseFloat(data.total) || 0
-      }
-    ];
+    // Prepare line items from articles or fallback
+    const items = (data.articles && Array.isArray(data.articles) && data.articles.length > 0)
+      ? data.articles.map(art => ({
+          categorie: art.categorie || 'Prestation',
+          description: `[${art.categorie || 'Service'}] ${art.designation || art.details || 'Prestation'}`,
+          quantite: Number(art.quantite) || 1,
+          prix_unitaire: Number(art.prix_vente) || 0,
+          total: (Number(art.quantite) || 1) * (Number(art.prix_vente) || 0)
+        }))
+      : [
+          {
+            description: data.details || 'Prestation de service',
+            quantite: 1,
+            prix_unitaire: parseFloat(data.total) || 0,
+            total: parseFloat(data.total) || 0
+          }
+        ];
 
     const newDoc = {
       numero,
@@ -508,39 +543,101 @@ const Ventes = () => {
                     <p className="font-medium text-muted-foreground">Aucune vente trouvée</p>
                   </td>
                 </tr>
-              ) : ventes.map(v => (
-                <tr key={v.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
-                  <td className="px-4 py-3 text-muted-foreground">{fmtDate(v.date_vente || v.created_at)}</td>
-                  <td className="px-4 py-3 font-medium">{v.client_nom}</td>
-                  <td className="px-4 py-3 text-muted-foreground max-w-[180px] truncate">{v.details || '—'}</td>
-                  <td className="px-4 py-3">
-                    {v.fournisseur_id ? <Badge variant="secondary" className="text-xs">{getFournisseurName(v.fournisseur_id)}</Badge> : '—'}
-                  </td>
-                  <td className="px-4 py-3 text-muted-foreground">{getServiceName(v.service_id)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{fmt(v.tarif_base)}</td>
-                  <td className="px-4 py-3 text-right tabular-nums">{fmt(v.commission)}</td>
-                  <td className="px-4 py-3 text-right font-semibold tabular-nums">{fmt(v.total)}</td>
-                  <td className="px-4 py-3 text-center"><Badge variant={etatVariant(v.etat)}>{v.etat}</Badge></td>
-                  <td className="px-4 py-3">
-                    <div className="flex items-center justify-end gap-1.5">
-                      <Button variant="outline" size="sm" onClick={() => { setEditingVente(v); setIsFormOpen(true); }}>
-                        <Pencil size={13} />
-                      </Button>
-                      <Button variant="outline" size="sm" onClick={() => setInvoiceModal({ isOpen: true, transaction: v, type: 'proforma' })}>
-                        <FileText size={13} />
-                      </Button>
-                      <Button size="sm" onClick={() => setInvoiceModal({ isOpen: true, transaction: v, type: 'facture' })}>
-                        <FileDown size={13} />
-                      </Button>
-                      {isAdmin && (
-                        <Button variant="destructive" size="icon-sm" onClick={() => handleDelete(v.id)} title="Supprimer la vente">
-                          <Trash2 size={14} />
-                        </Button>
+              ) : ventes.map(v => {
+                const hasArticles = v.articles && Array.isArray(v.articles) && v.articles.length > 0;
+                const vDest = v.destination || v.articles?.[0]?.destination || (() => {
+                  if (v.details) {
+                    const match = v.details.match(/\[(?:🌍|Destination:?)\s*([^\]]+)\]/i);
+                    if (match) return match[1].trim();
+                  }
+                  return '';
+                })();
+
+                return (
+                  <tr key={v.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                    <td className="px-4 py-3 text-muted-foreground">{fmtDate(v.date_vente || v.created_at)}</td>
+                    <td className="px-4 py-3 font-medium text-foreground">
+                      <div className="space-y-0.5">
+                        <span className="font-bold block">{v.client_nom}</span>
+                        {vDest && (
+                          <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-muted/60 px-1.5 py-0.5 rounded border text-muted-foreground">
+                            <CountryFlag destinationName={vDest} className="w-3.5 h-2.5 rounded-2xs" />
+                            <span>{vDest}</span>
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    
+                    {/* Articles / Détails Column */}
+                    <td className="px-4 py-3">
+                      {hasArticles ? (
+                        <div className="space-y-1">
+                          <button
+                            type="button"
+                            onClick={() => setViewingArticlesVente({ ...v, destination: vDest })}
+                            className="text-left group/art flex items-center gap-1.5 flex-wrap cursor-pointer"
+                            title="Cliquer pour voir le détail des articles"
+                          >
+                            <span className="text-[10px] font-black bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20 hover:bg-primary/20 transition-colors shadow-2xs">
+                              {v.articles.length} {v.articles.length > 1 ? 'articles' : 'article'}
+                            </span>
+                            {v.articles.slice(0, 2).map((a, idx) => (
+                              <span key={idx} className="text-[10px] font-bold bg-muted/60 px-1.5 py-0.5 rounded border text-foreground/80 max-w-[150px] truncate">
+                                {a.categorie === 'Billeterie' ? '✈️' : a.categorie === 'Hôtel' ? '🏨' : a.categorie === 'Visa' ? '📑' : a.categorie === 'Transfert' ? '🚐' : a.categorie === 'Omra' ? '🕋' : '🏷️'} {a.designation ? a.designation : a.categorie}
+                              </span>
+                            ))}
+                            {v.articles.length > 2 && (
+                              <span className="text-[10px] font-bold text-muted-foreground">
+                                +{v.articles.length - 2}
+                              </span>
+                            )}
+                          </button>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground max-w-[180px] truncate block">{v.details || '—'}</span>
                       )}
-                    </div>
-                  </td>
-                </tr>
-              ))}
+                    </td>
+
+                    <td className="px-4 py-3">
+                      {v.fournisseur_id ? <Badge variant="secondary" className="text-xs">{getFournisseurName(v.fournisseur_id)}</Badge> : '—'}
+                    </td>
+                    <td className="px-4 py-3 text-muted-foreground">{getServiceName(v.service_id)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-muted-foreground">{fmt(v.tarif_base)}</td>
+                    <td className="px-4 py-3 text-right tabular-nums font-bold text-amber-600 dark:text-amber-400">{fmt(v.commission)}</td>
+                    <td className="px-4 py-3 text-right font-black tabular-nums text-foreground">{fmt(v.total)}</td>
+                    <td className="px-4 py-3 text-center"><Badge variant={etatVariant(v.etat)}>{v.etat}</Badge></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1.5">
+                        {hasArticles && (
+                          <Button 
+                            variant="ghost" 
+                            size="icon-sm" 
+                            onClick={() => setViewingArticlesVente({ ...v, destination: vDest })}
+                            title="Voir les articles"
+                            className="h-8 w-8 text-muted-foreground hover:text-primary"
+                          >
+                            <Eye size={13} />
+                          </Button>
+                        )}
+                        <Button variant="outline" size="sm" onClick={() => { setEditingVente({ ...v, destination: vDest }); setIsFormOpen(true); }} title="Modifier">
+                          <Pencil size={13} />
+                        </Button>
+                        <Button variant="outline" size="sm" onClick={() => setInvoiceModal({ isOpen: true, transaction: v, type: 'proforma' })} title="Proforma">
+                          <FileText size={13} />
+                        </Button>
+                        <Button size="sm" onClick={() => setInvoiceModal({ isOpen: true, transaction: v, type: 'facture' })} title="Facture">
+                          <FileDown size={13} />
+                        </Button>
+                        {isAdmin && (
+                          <Button variant="destructive" size="icon-sm" onClick={() => handleDelete(v.id)} title="Supprimer la vente">
+                            <Trash2 size={14} />
+                          </Button>
+                        )}
+                      </div>
+                    </td>
+                  </tr>
+                );
+              })}
             </tbody>
           </table>
         </div>
@@ -576,6 +673,91 @@ const Ventes = () => {
       {isFormOpen && <VenteForm onClose={() => { setIsFormOpen(false); setEditingVente(null); }} onSave={handleSaveVente} initialData={editingVente} />}
       {invoiceModal.isOpen && <FactureForm transaction={invoiceModal.transaction} type={invoiceModal.type}
         onClose={() => setInvoiceModal({ isOpen: false, transaction: null, type: null })} onGenerate={handleGenerateInvoice} servicesList={servicesList} />}
+
+      {/* ── Modal Détail des Articles de la Vente ─────────────── */}
+      {viewingArticlesVente && (
+        <Dialog open={true} onOpenChange={() => setViewingArticlesVente(null)}>
+          <DialogContent className="max-w-xl p-0 overflow-hidden rounded-3xl" onClose={() => setViewingArticlesVente(null)}>
+            <div className="bg-gradient-to-r from-primary/15 via-primary/5 to-transparent px-6 py-5 border-b flex items-center justify-between">
+              <div>
+                <DialogTitle className="text-lg font-black flex items-center gap-2 flex-wrap">
+                  <Layers size={18} className="text-primary" />
+                  <span>Détail des Articles — {viewingArticlesVente.client_nom}</span>
+                  {viewingArticlesVente.destination && (
+                    <span className="inline-flex items-center gap-1 text-xs font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">
+                      <CountryFlag countryName={viewingArticlesVente.destination} className="w-3.5 h-2.5 rounded-2xs" />
+                      <span>{viewingArticlesVente.destination}</span>
+                    </span>
+                  )}
+                </DialogTitle>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Vente du {fmtDate(viewingArticlesVente.date_vente || viewingArticlesVente.created_at)}
+                </p>
+              </div>
+              <Badge variant={etatVariant(viewingArticlesVente.etat)}>{viewingArticlesVente.etat}</Badge>
+            </div>
+
+            <div className="p-6 space-y-4 max-h-[60vh] overflow-y-auto">
+              <div className="space-y-2.5">
+                {(viewingArticlesVente.articles || []).map((art, idx) => {
+                  const q = Number(art.quantite) || 1;
+                  const pa = Number(art.prix_achat) || 0;
+                  const pv = Number(art.prix_vente) || 0;
+                  const totVente = q * pv;
+                  const margeLigne = (pv - pa) * q;
+
+                  return (
+                    <div key={idx} className="p-3.5 rounded-2xl border border-border/80 bg-muted/20 space-y-1.5 shadow-2xs">
+                      <div className="flex items-start justify-between gap-2">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-black bg-background border px-2 py-0.5 rounded-lg shadow-2xs">
+                            {art.categorie === 'Billeterie' ? '✈️' : art.categorie === 'Hôtel' ? '🏨' : art.categorie === 'Visa' ? '📑' : art.categorie === 'Transfert' ? '🚐' : art.categorie === 'Omra' ? '🕋' : '🏷️'} {art.categorie}
+                          </span>
+                          <h4 className="font-bold text-xs text-foreground">
+                            {art.designation || 'Prestation'}
+                          </h4>
+                        </div>
+                        <span className="text-xs font-black text-primary tabular-nums">
+                          {totVente.toLocaleString('fr-DZ')} DZD
+                        </span>
+                      </div>
+
+                      <div className="flex items-center justify-between text-[11px] text-muted-foreground pt-1 border-t border-border/40">
+                        <span>Qté : <strong>{q}</strong> · P.U Vente : <strong>{pv.toLocaleString('fr-DZ')} DZD</strong></span>
+                        <span className="text-emerald-600 dark:text-emerald-400 font-bold">
+                          Marge : +{margeLigne.toLocaleString('fr-DZ')} DZD
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Total Box */}
+              <div className="p-4 rounded-2xl bg-slate-900 text-white flex items-center justify-between shadow-md">
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-slate-400 block">Total Achat Fournisseur</span>
+                  <span className="text-sm font-bold text-slate-300">{(viewingArticlesVente.tarif_base || 0).toLocaleString('fr-DZ')} DZD</span>
+                </div>
+                <div>
+                  <span className="text-[10px] uppercase font-bold text-amber-400 block">Marge Agence</span>
+                  <span className="text-sm font-bold text-amber-400">{(viewingArticlesVente.commission || 0).toLocaleString('fr-DZ')} DZD</span>
+                </div>
+                <div className="text-right">
+                  <span className="text-[10px] uppercase font-bold text-emerald-400 block">Total Vente (TTC)</span>
+                  <span className="text-base font-black text-emerald-400">{(viewingArticlesVente.total || 0).toLocaleString('fr-DZ')} DZD</span>
+                </div>
+              </div>
+            </div>
+
+            <div className="px-6 py-3.5 border-t bg-muted/20 flex justify-end gap-2">
+              <Button variant="outline" size="sm" onClick={() => setViewingArticlesVente(null)} className="rounded-xl font-bold">
+                Fermer
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
 
       {/* ── Modal Rapport ───────────────────────────────────── */}
       <Dialog open={isReportOpen} onOpenChange={setIsReportOpen}>

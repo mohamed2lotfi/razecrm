@@ -29,6 +29,10 @@ const marketingItems = [
   { to: '/marketing', icon: Mail, label: 'Email Marketing' },
 ];
 
+const websiteItems = [
+  { to: '/website', icon: Globe, label: 'Site Web (Vitrine)' },
+];
+
 const settingsItems = [
   { to: '/profil', icon: User, label: 'Mon Profil' },
   { to: '/master-data', icon: Database, label: 'Master Data' },
@@ -199,6 +203,9 @@ const Sidebar = () => {
 
         <SectionLabel>Marketing</SectionLabel>
         {marketingItems.map(item => <SidebarLink key={item.to} {...item} />)}
+        
+        <SectionLabel>Vitrine & Site Web</SectionLabel>
+        {websiteItems.map(item => <SidebarLink key={item.to} {...item} />)}
         
         {/* Master Data - accessible à tous */}
         <SectionLabel>Paramètres</SectionLabel>

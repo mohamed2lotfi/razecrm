@@ -8,12 +8,17 @@ CREATE TABLE IF NOT EXISTS public.client_remarques (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id UUID NOT NULL REFERENCES public.clients(id) ON DELETE CASCADE,
     auteur_nom TEXT NOT NULL,
-    auteur_id UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    auteur_id UUID,
     auteur_role TEXT DEFAULT 'agent',
+    auteur_avatar_url TEXT,
     remarque TEXT NOT NULL,
     created_at TIMESTAMPTZ NOT NULL DEFAULT timezone('utc'::text, now()),
     updated_at TIMESTAMPTZ DEFAULT timezone('utc'::text, now())
 );
+
+-- Colonnes de compatibilité si la table existait déjà
+ALTER TABLE public.client_remarques ADD COLUMN IF NOT EXISTS auteur_avatar_url TEXT;
+ALTER TABLE public.client_remarques ADD COLUMN IF NOT EXISTS auteur_id UUID;
 
 -- 2. Activation de la sécurité RLS
 ALTER TABLE public.client_remarques ENABLE ROW LEVEL SECURITY;

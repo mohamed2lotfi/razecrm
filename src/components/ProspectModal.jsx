@@ -965,8 +965,13 @@ Start the message directly with the greeting. End it with the closing phrase. No
       remarques: remarquesDevis
     };
 
+    const clientFound = formData.client_id ? clientsList.find(c => c.id === formData.client_id) : null;
+    const computedNomProspect = clientSearch?.trim() || clientFound?.nom || formData.nom_prospect || 'Client Prospect';
+
     onSave({ 
       ...formData, 
+      nom_prospect: computedNomProspect,
+      phone: formData.phone || clientFound?.telephone || null,
       details_devis: JSON.stringify(detailsObject),
       devis_ia: aiQuoteText 
     });
@@ -1105,7 +1110,7 @@ Start the message directly with the greeting. End it with the closing phrase. No
               )}
             >
               <Briefcase size={14} className={activeTab === 'offre' ? "text-primary" : ""} />
-              2. Offre Interne ({devisOptions.length})
+              2. Offre Interne ({devisOptions.filter(o => o.text?.trim() || (o.images && o.images.length > 0)).length})
             </button>
 
             <button
@@ -2042,9 +2047,9 @@ Start the message directly with the greeting. End it with the closing phrase. No
                 <option value="sim_active">🏠 Uniquement la Simulation Active en cours</option>
                 
                 {/* Specific options */}
-                {devisOptions.map((opt, idx) => (
+                {devisOptions.filter(opt => opt.text?.trim() || (opt.images && opt.images.length > 0)).map((opt, idx) => (
                   <option key={`opt_${idx}`} value={`opt_${idx}`}>
-                    👉 Option {idx + 1} ({opt.text ? opt.text.substring(0, 30) + '...' : 'Texte vide'})
+                    👉 Option {idx + 1} ({opt.text ? opt.text.substring(0, 30) + '...' : 'Images jointes'})
                   </option>
                 ))}
 

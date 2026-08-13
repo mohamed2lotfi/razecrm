@@ -1,13 +1,18 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { supabase } from '@/lib/supabase';
 import { Star, CheckCircle2, Sparkles, Plane, ThumbsUp } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 export const TestimonialsSection = () => {
   const { isArabic } = useLanguage();
+  const [column1Cards, setColumn1Cards] = useState([]);
+  const [column2Cards, setColumn2Cards] = useState([]);
+  const [column3Cards, setColumn3Cards] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  // 3 distinct collections of reviews optimized for 60 FPS performance
-  const column1Cards = [
+  // Default fallback reviews
+  const defaultCol1 = [
     {
       id: 'c1-1',
       name: isArabic ? 'كريم مزيان' : 'Karim Meziane',
@@ -52,7 +57,7 @@ export const TestimonialsSection = () => {
     }
   ];
 
-  const column2Cards = [
+  const defaultCol2 = [
     {
       id: 'c2-1',
       name: isArabic ? 'الحاج مصطفى بوعلام' : 'Hadj Mustapha B.',
@@ -97,7 +102,7 @@ export const TestimonialsSection = () => {
     }
   ];
 
-  const column3Cards = [
+  const defaultCol3 = [
     {
       id: 'c3-1',
       name: isArabic ? 'فريد وأمينة زروقي' : 'Farid & Amina Zerrouki',
@@ -142,6 +147,72 @@ export const TestimonialsSection = () => {
     }
   ];
 
+  useEffect(() => {
+    fetchTestimonials();
+  }, [isArabic]);
+
+  const fetchTestimonials = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('website_testimonials')
+        .select('*')
+        .eq('is_active', true)
+        .order('ordre', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        const c1 = [];
+        const c2 = [];
+        const c3 = [];
+
+        data.forEach((item, index) => {
+          const initials = (item.name || 'U')
+            .split(' ')
+            .map(n => n.charAt(0))
+            .join('')
+            .substring(0, 2)
+            .toUpperCase();
+
+          const formatted = {
+            id: item.id || `testi-${index}`,
+            name: isArabic ? (item.name_ar || item.name) : item.name,
+            handle: isArabic ? (item.handle_ar || item.handle) : item.handle,
+            initials: initials || 'CL',
+            avatarUrl: item.avatar_url,
+            avatarGradient: item.avatar_gradient || 'from-emerald-600 to-teal-800',
+            rating: item.rating || 5,
+            tag: isArabic ? (item.tag_ar || item.tag) : item.tag,
+            text: isArabic ? (item.text_ar || item.text) : item.text,
+            verified: isArabic ? (item.verified_ar || item.verified) : item.verified,
+            date: isArabic ? (item.date_text_ar || item.date_text) : item.date_text
+          };
+
+          // Column distribution
+          const targetCol = item.column_index || (index % 3 + 1);
+          if (targetCol === 1) c1.push(formatted);
+          else if (targetCol === 2) c2.push(formatted);
+          else c3.push(formatted);
+        });
+
+        // Ensure each column has at least items for smooth scrolling loop
+        setColumn1Cards(c1.length > 0 ? c1 : defaultCol1);
+        setColumn2Cards(c2.length > 0 ? c2 : (c1.length > 0 ? c1 : defaultCol2));
+        setColumn3Cards(c3.length > 0 ? c3 : (c2.length > 0 ? c2 : defaultCol3));
+      } else {
+        setColumn1Cards(defaultCol1);
+        setColumn2Cards(defaultCol2);
+        setColumn3Cards(defaultCol3);
+      }
+    } catch (err) {
+      console.warn('Using default testimonials fallback:', err);
+      setColumn1Cards(defaultCol1);
+      setColumn2Cards(defaultCol2);
+      setColumn3Cards(defaultCol3);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   // Responsive Card Component supporting Light and Dark modes seamlessly
   const TestimonialCard = ({ item }) => (
     <div className="bg-white dark:bg-[#141414] hover:bg-slate-50/90 dark:hover:bg-[#1a1a1a] border border-slate-200/80 dark:border-white/10 hover:border-emerald-500/30 dark:hover:border-white/20 rounded-2xl p-5 transition-colors duration-200 text-left rtl:text-right shadow-sm dark:shadow-none group">
@@ -165,13 +236,21 @@ export const TestimonialsSection = () => {
       {/* Author Footer */}
       <div className="pt-3 border-t border-slate-100 dark:border-white/10 flex items-center justify-between gap-3 mt-auto">
         <div className="flex items-center gap-2.5 min-w-0">
-          {/* Avatar Placeholder */}
-          <div className={cn(
-            "w-8 h-8 rounded-full bg-gradient-to-tr text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm border border-white/15",
-            item.avatarGradient
-          )}>
-            {item.initials}
-          </div>
+          {/* Avatar / Photo or Gradient */}
+          {item.avatarUrl ? (
+            <img 
+              src={item.avatarUrl} 
+              alt={item.name} 
+              className="w-8 h-8 rounded-full object-cover shrink-0 shadow-sm border border-white/15" 
+            />
+          ) : (
+            <div className={cn(
+              "w-8 h-8 rounded-full bg-gradient-to-tr text-white font-bold text-xs flex items-center justify-center shrink-0 shadow-sm border border-white/15",
+              item.avatarGradient
+            )}>
+              {item.initials}
+            </div>
+          )}
           <div className="min-w-0">
             <h4 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-white leading-tight truncate">
               {item.name}
@@ -279,7 +358,6 @@ export const TestimonialsSection = () => {
 
 
         {/* ── 2. Bottom Section: 3-Column Infinite Vertical Scrolling ───────── */}
-        {/* Main Scrolling Wrapper with GPU Hardware Layer Isolation */}
         <div 
           className="relative h-[620px] overflow-hidden"
           style={{
@@ -293,13 +371,11 @@ export const TestimonialsSection = () => {
             {/* Column 1 (Left): Animates Vertically Downwards (-50% to 0%) */}
             <div className="overflow-hidden relative h-full">
               <div className="flex flex-col gap-4 animate-scroll-down hover:[animation-play-state:paused]">
-                {/* Set 1 */}
-                {column1Cards.map(item => (
-                  <TestimonialCard key={`c1-s1-${item.id}`} item={item} />
+                {column1Cards.map((item, idx) => (
+                  <TestimonialCard key={`c1-s1-${item.id || idx}`} item={item} />
                 ))}
-                {/* Set 2 (Identical duplicate for seamless infinite loop) */}
-                {column1Cards.map(item => (
-                  <TestimonialCard key={`c1-s2-${item.id}`} item={item} />
+                {column1Cards.map((item, idx) => (
+                  <TestimonialCard key={`c1-s2-${item.id || idx}`} item={item} />
                 ))}
               </div>
             </div>
@@ -307,13 +383,11 @@ export const TestimonialsSection = () => {
             {/* Column 2 (Middle): Animates Vertically Upwards (0% to -50%) */}
             <div className="overflow-hidden relative h-full hidden md:block">
               <div className="flex flex-col gap-4 animate-scroll-up hover:[animation-play-state:paused]">
-                {/* Set 1 */}
-                {column2Cards.map(item => (
-                  <TestimonialCard key={`c2-s1-${item.id}`} item={item} />
+                {column2Cards.map((item, idx) => (
+                  <TestimonialCard key={`c2-s1-${item.id || idx}`} item={item} />
                 ))}
-                {/* Set 2 (Identical duplicate for seamless infinite loop) */}
-                {column2Cards.map(item => (
-                  <TestimonialCard key={`c2-s2-${item.id}`} item={item} />
+                {column2Cards.map((item, idx) => (
+                  <TestimonialCard key={`c2-s2-${item.id || idx}`} item={item} />
                 ))}
               </div>
             </div>
@@ -321,13 +395,11 @@ export const TestimonialsSection = () => {
             {/* Column 3 (Right): Animates Vertically Downwards (-50% to 0%) */}
             <div className="overflow-hidden relative h-full hidden md:block">
               <div className="flex flex-col gap-4 animate-scroll-down hover:[animation-play-state:paused]">
-                {/* Set 1 */}
-                {column3Cards.map(item => (
-                  <TestimonialCard key={`c3-s1-${item.id}`} item={item} />
+                {column3Cards.map((item, idx) => (
+                  <TestimonialCard key={`c3-s1-${item.id || idx}`} item={item} />
                 ))}
-                {/* Set 2 (Identical duplicate for seamless infinite loop) */}
-                {column3Cards.map(item => (
-                  <TestimonialCard key={`c3-s2-${item.id}`} item={item} />
+                {column3Cards.map((item, idx) => (
+                  <TestimonialCard key={`c3-s2-${item.id || idx}`} item={item} />
                 ))}
               </div>
             </div>

@@ -11,6 +11,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import ClientRemarquesModal from '@/components/ClientRemarquesModal';
+import ProspectModal from '@/components/ProspectModal';
 import CountryFlag from '@/components/CountryFlag';
 
 const fmtDZD = (n) => Number(Math.round(n || 0)).toLocaleString('fr-DZ', {
@@ -25,6 +26,8 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
   const [omraInscriptions, setOmraInscriptions] = useState([]);
   const [devisList, setDevisList] = useState([]);
   const [remarquesList, setRemarquesList] = useState([]);
+  const [servicesList, setServicesList] = useState([]);
+  const [selectedDevisForModal, setSelectedDevisForModal] = useState(null);
 
   // Totals & KPI
   const [stats, setStats] = useState({
@@ -73,6 +76,14 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
         .eq('client_id', client.id)
         .order('created_at', { ascending: false });
 
+      // 5. Fetch Services for ProspectModal
+      const { data: sData } = await supabase
+        .from('services')
+        .select('*')
+        .order('nom');
+
+      if (sData) setServicesList(sData);
+
       const clientVentes = vData || [];
       const clientOmra = omraData || [];
       const clientDevis = devisData || [];
@@ -101,6 +112,14 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
       console.error("Error loading client dossier:", err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleOpenDevisDetail = (devis) => {
+    if (onOpenDevis) {
+      onOpenDevis(devis);
+    } else {
+      setSelectedDevisForModal(devis);
     }
   };
 
@@ -274,24 +293,42 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
                   ) : (
                     <div className="space-y-2.5">
                       {ventes.map(v => (
-                        <div key={v.id} className="p-3.5 rounded-xl border bg-white shadow-2xs hover:border-emerald-300 transition-all flex items-center justify-between gap-3 text-xs">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-2">
-                              <span className="font-bold text-slate-900 text-sm">{v.services?.nom || 'Prestation Divers'}</span>
+                        <div key={v.id} className="p-3.5 rounded-xl border bg-white shadow-2xs hover:border-emerald-300 transition-all flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+                          <div className="space-y-1.5 flex-1 min-w-0">
+                            <div className="flex items-center gap-2 flex-wrap">
+                              <span className="font-bold text-slate-900 text-sm">{v.services?.nom || 'Prestation Multi-Articles'}</span>
                               <span className={cn(
                                 "text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border",
                                 v.etat === 'Payé' || v.etat === 'Confirmé' ? "bg-emerald-50 text-emerald-700 border-emerald-200" : "bg-amber-50 text-amber-700 border-amber-200"
                               )}>
                                 {v.etat || 'Enregistré'}
                               </span>
+                              {v.articles && Array.isArray(v.articles) && v.articles.length > 0 && (
+                                <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-md border border-primary/20">
+                                  {v.articles.length} {v.articles.length > 1 ? 'articles' : 'article'}
+                                </span>
+                              )}
                             </div>
-                            <div className="text-[11px] text-slate-500 flex items-center gap-3">
+
+                            {/* Articles pill tags if present */}
+                            {v.articles && Array.isArray(v.articles) && v.articles.length > 0 ? (
+                              <div className="flex items-center gap-1.5 flex-wrap pt-0.5">
+                                {v.articles.map((a, aIdx) => (
+                                  <span key={aIdx} className="text-[10px] font-semibold bg-slate-100 px-1.5 py-0.5 rounded border text-slate-700">
+                                    {a.categorie === 'Billeterie' ? '✈️' : a.categorie === 'Hôtel' ? '🏨' : a.categorie === 'Visa' ? '📑' : a.categorie === 'Transfert' ? '🚐' : a.categorie === 'Omra' ? '🕋' : '🏷️'} {a.designation || a.categorie} {Number(a.quantite) > 1 ? `(x${a.quantite})` : ''}
+                                  </span>
+                                ))}
+                              </div>
+                            ) : (
+                              v.details && <p className="text-[11px] text-slate-500 truncate">📝 {v.details}</p>
+                            )}
+
+                            <div className="text-[11px] text-slate-400">
                               <span>📅 {new Date(v.date_vente).toLocaleDateString('fr-FR')}</span>
-                              {v.details && <span>📝 {v.details}</span>}
                             </div>
                           </div>
 
-                          <div className="text-right">
+                          <div className="text-left sm:text-right shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0">
                             <span className="text-[10px] font-semibold text-slate-400 block">Montant Total</span>
                             <span className="text-sm font-black text-emerald-700">{fmtDZD(v.total)} DZD</span>
                           </div>
@@ -383,7 +420,7 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
                         return (
                           <div 
                             key={d.id} 
-                            onClick={() => onOpenDevis && onOpenDevis(d)}
+                            onClick={() => handleOpenDevisDetail(d)}
                             className="p-3.5 rounded-xl border bg-white shadow-2xs hover:border-emerald-300 transition-all flex items-center justify-between gap-3 text-xs cursor-pointer group"
                           >
                             <div className="space-y-1">
@@ -407,7 +444,15 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
                               </div>
                             </div>
 
-                            <Button variant="ghost" size="sm" className="h-8 text-xs font-bold gap-1 text-emerald-700 group-hover:bg-emerald-50">
+                            <Button 
+                              variant="ghost" 
+                              size="sm" 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleOpenDevisDetail(d);
+                              }}
+                              className="h-8 text-xs font-bold gap-1 text-emerald-700 group-hover:bg-emerald-50 cursor-pointer"
+                            >
                               Voir devis <ArrowUpRight size={13} />
                             </Button>
                           </div>
@@ -463,6 +508,32 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      {/* ProspectModal opened directly when clicking a devis in the dossier */}
+      {selectedDevisForModal && (
+        <ProspectModal
+          isOpen={true}
+          onClose={() => setSelectedDevisForModal(null)}
+          onSave={async (savedProspect) => {
+            try {
+              const { id, chosen: _chosen, ...savePayload } = savedProspect;
+              if (id) {
+                await supabase.from('pipeline').update(savePayload).eq('id', id);
+              } else {
+                await supabase.from('pipeline').insert([savePayload]);
+              }
+              fetchClientDossier();
+            } catch (err) {
+              console.error("Error saving quote from dossier:", err);
+            }
+            setSelectedDevisForModal(null);
+          }}
+          prospect={selectedDevisForModal}
+          isNew={false}
+          servicesList={servicesList}
+          clientsList={client ? [client] : []}
+        />
+      )}
     </Dialog>
   );
 };

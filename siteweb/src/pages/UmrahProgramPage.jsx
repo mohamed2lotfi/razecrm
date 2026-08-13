@@ -1,21 +1,43 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import { useLanguage } from '@/contexts/LanguageContext';
+import { supabase } from '@/lib/supabase';
+import { OmraStepImageSlider } from '@/components/OmraStepImageSlider';
 import { 
   Plane, Hotel, Compass, Heart, Bus, Sparkles, 
   MapPin, CheckCircle2, ShieldCheck, Clock, Users, 
   ArrowRight, ArrowLeft, ChevronDown, Award, Gift, 
-  Calendar, Check, HelpCircle
+  Calendar, Check, HelpCircle, Loader2
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
+
+// Icon Map for dynamic icons from Supabase
+const ICON_MAP = {
+  Plane,
+  Hotel,
+  Sparkles,
+  Compass,
+  Bus,
+  Heart,
+  MapPin,
+  Gift,
+  Award,
+  ShieldCheck,
+  CheckCircle2,
+  Calendar,
+  Users
+};
 
 export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
   const { t, isArabic } = useLanguage();
   const [openFaq, setOpenFaq] = useState(null);
+  const [steps, setSteps] = useState([]);
+  const [loading, setLoading] = useState(true);
 
   const ArrowIcon = isArabic ? ArrowLeft : ArrowRight;
 
-  const timelineSteps = [
+  // Default curated steps with multi-image sliders
+  const defaultTimelineSteps = [
     {
       step: "01",
       location: isArabic ? "مطار الجزائر / وهران / قسنطينة" : "Aéroports d'Alger / Oran / Constantine",
@@ -29,8 +51,33 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "مرافقة ومساعدة بالمطار" : "Assistance personnalisée à l'aéroport",
         isArabic ? "أمتعة مسموحة سخية" : "Franchise bagages généreuse"
       ],
-      image: "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=1000&auto=format&fit=crop",
-      icon: Plane
+      icon: Plane,
+      images: [
+        {
+          id: "def-01-1",
+          url: "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Aéroport International d'Alger",
+          title_ar: "مطار الجزائر الدولي",
+          desc_fr: "Accueil VIP et formalités rapides",
+          desc_ar: "استقبال راقٍ وتسهيل إجراءات السفر"
+        },
+        {
+          id: "def-01-2",
+          url: "https://images.unsplash.com/photo-1540959733332-eab4deabeeaf?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Vol Direct Confortable",
+          title_ar: "رحلة جوية مباشرة ومريحة",
+          desc_fr: "Flotte moderne et collation à bord",
+          desc_ar: "أسطول طائرات حديث مع وجبات وضيافة"
+        },
+        {
+          id: "def-01-3",
+          url: "https://images.unsplash.com/photo-1569154941061-e231b4725ef1?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Arrivée à Médine Al-Munawwarah",
+          title_ar: "الوصول إلى مطار الأمير محمد بالمدينة",
+          desc_fr: "Accueil chaleureux par l'équipe sur place",
+          desc_ar: "استقبال بالورود وتسهيل نقل الأمتعة"
+        }
+      ]
     },
     {
       step: "02",
@@ -45,8 +92,33 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "فنادق 4★ و 5★ مصنفة" : "Hôtels 4★ et 5★ certifiés",
         isArabic ? "إفطار صباحي راقٍ ومتنوع" : "Buffets de petit-déjeuner inclus"
       ],
-      image: "https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?q=80&w=1000&auto=format&fit=crop",
-      icon: Hotel
+      icon: Hotel,
+      images: [
+        {
+          id: "def-02-1",
+          url: "https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Hôtel de Prestige à Médine",
+          title_ar: "فندق راقٍ بالمنطقة المركزية",
+          desc_fr: "Chambres spacieuses à 2 pas du Haram",
+          desc_ar: "غرف فندقية مجهزة بإطلالات مميزة"
+        },
+        {
+          id: "def-02-2",
+          url: "https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Confort & Suites Familiales",
+          title_ar: "أجنحة فندقية عائلية فاخرة",
+          desc_fr: "Service hôtelier d'exception 24h/24",
+          desc_ar: "خدمة غرف ممتازة على مدار الساعة"
+        },
+        {
+          id: "def-02-3",
+          url: "https://images.unsplash.com/photo-1582719508461-905c673771fd?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Buffets & Restauration Raffinée",
+          title_ar: "بوفيهات إفطار ومطاعم متنوعة",
+          desc_fr: "Saveurs orientales et internationales",
+          desc_ar: "تشكيلة أطباق لذيذة ومتنوعة"
+        }
+      ]
     },
     {
       step: "03",
@@ -61,8 +133,25 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "تنظيم وتوجيه روحي للمجموعات" : "Encadrement par nos guides",
         isArabic ? "أوقات مخصصة للرجال والنساء" : "Créneaux dédiés hommes & femmes"
       ],
-      image: "https://images.unsplash.com/photo-1564769625905-50e93615e769?q=80&w=1000&auto=format&fit=crop",
-      icon: Sparkles
+      icon: Sparkles,
+      images: [
+        {
+          id: "def-03-1",
+          url: "https://images.unsplash.com/photo-1564769625905-50e93615e769?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Mosquée du Prophète (ﷺ)",
+          title_ar: "المسجد النبوي الشريف",
+          desc_fr: "Moments de paix et de spiritualité",
+          desc_ar: "أجواء من السكينة والطمأنينة"
+        },
+        {
+          id: "def-03-2",
+          url: "https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "La Noble Rawdah",
+          title_ar: "الروضة الشريفة المباركة",
+          desc_fr: "Prière et invocations exaucées",
+          desc_ar: "الصلاة والسلام على النبي وصاحبيه"
+        }
+      ]
     },
     {
       step: "04",
@@ -77,8 +166,33 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "شرح تاريخي وروحي وافٍ" : "Récits historiques par nos imams",
         isArabic ? "زيارة مزارع تمور العجوة الأصلية" : "Dégustation & achat de dattes Ajwa"
       ],
-      image: "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1000&auto=format&fit=crop",
-      icon: Compass
+      icon: Compass,
+      images: [
+        {
+          id: "def-04-1",
+          url: "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Mosquée de Quba",
+          title_ar: "مسجد قباء المبارك",
+          desc_fr: "Première mosquée de l'Islam",
+          desc_ar: "أول مسجد أُسس على التقوى"
+        },
+        {
+          id: "def-04-2",
+          url: "https://images.unsplash.com/photo-1580418827493-f2b22c0a76cb?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Mont Uhud & Martyrs",
+          title_ar: "جبل أحد ومقبرة الشهداء",
+          desc_fr: "Recueillement historique et spirituel",
+          desc_ar: "استحضار بطولات الصحابة الكرام"
+        },
+        {
+          id: "def-04-3",
+          url: "https://images.unsplash.com/photo-1509316975850-ff9c5deb0cd9?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Palmeraies & Dattes Ajwa",
+          title_ar: "مزارع تمور العجوة بالمدينة",
+          desc_fr: "Dégustation directe de dattes fraîches",
+          desc_ar: "تذوق وشراء أجود أنواع تمور المدينة"
+        }
+      ]
     },
     {
       step: "05",
@@ -93,8 +207,25 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "مقاعد مريحة ومنافذ شحن USB" : "Sièges inclinables & ports de charge",
         isArabic ? "توزيع مياه وضيافة خفيفة" : "Collation & boissons fraîches"
       ],
-      image: "https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?q=80&w=1000&auto=format&fit=crop",
-      icon: Bus
+      icon: Bus,
+      images: [
+        {
+          id: "def-05-1",
+          url: "https://images.unsplash.com/photo-1544620347-c4fd4a3d5957?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Autocars VIP Grand Tourisme",
+          title_ar: "حافلات سياحية VIP حديثة",
+          desc_fr: "Climatisation intégrale et sièges inclinables",
+          desc_ar: "راحة تامة وتكييف ممتاز طوال الرحلة"
+        },
+        {
+          id: "def-05-2",
+          url: "https://images.unsplash.com/photo-1570125909232-eb263c188f7e?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Trajet Médine ➔ Makkah",
+          title_ar: "طريق الهجرة النبوية الشريفة",
+          desc_fr: "Accompagnement et chants spirituels",
+          desc_ar: "أجواء إيمانية مع التلبية والذكر"
+        }
+      ]
     },
     {
       step: "06",
@@ -109,8 +240,25 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "وقت كافٍ للصلاة والتجهيز" : "Temps dédié au recueillement",
         isArabic ? "تلبية جماعية بصوت موحد" : "Talbiyah collective encadrée"
       ],
-      image: "https://images.unsplash.com/photo-1565552645632-d725f8bfc19a?q=80&w=1000&auto=format&fit=crop",
-      icon: Heart
+      icon: Heart,
+      images: [
+        {
+          id: "def-06-1",
+          url: "https://images.unsplash.com/photo-1565552645632-d725f8bfc19a?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Mosquée du Miqat Dhul Hulayfah",
+          title_ar: "مسجد الميقات (ذو الحليفة)",
+          desc_fr: "Lieu de sacralisation pour l'Omra",
+          desc_ar: "عقد النية ولبس الإحرام والتلبية"
+        },
+        {
+          id: "def-06-2",
+          url: "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Émotion & Ferveur de l'Ihram",
+          title_ar: "خشوع وتلبية موحدة",
+          desc_fr: "« Labbayk Allahumma Labbayk »",
+          desc_ar: "لبيك اللهم عمرة لا رياء فيها ولا سُمعة"
+        }
+      ]
     },
     {
       step: "07",
@@ -125,8 +273,33 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "توفير أجهزة صوتية لسماع الأدعية" : "Écoute claire des invocations",
         isArabic ? "مساعدة كبار السن وذوي الاحتياجات" : "Assistance dédiée aux aînés"
       ],
-      image: "https://images.unsplash.com/photo-1564769625905-50e93615e769?q=80&w=1000&auto=format&fit=crop",
-      icon: Sparkles
+      icon: Sparkles,
+      images: [
+        {
+          id: "def-07-1",
+          url: "https://images.unsplash.com/photo-1564769625905-50e93615e769?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "La Sainte Kaaba — Masjid Al-Haram",
+          title_ar: "الكعبة المشرفة والحرم المكي",
+          desc_fr: "Tawaf autour de la Maison Sacrée",
+          desc_ar: "طواف الخشوع والدعاء المستجاب"
+        },
+        {
+          id: "def-07-2",
+          url: "https://images.unsplash.com/photo-1591604129939-f1efa4d9f7fa?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Le Sa'i entre Safa et Marwah",
+          title_ar: "السعي بين الصفا والمروة",
+          desc_fr: "Parcours sacré sous air climatisé",
+          desc_ar: "إتمام الأشواط السبعة والتحلل"
+        },
+        {
+          id: "def-07-3",
+          url: "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Eau Bénite de Zamzam",
+          title_ar: "الشرب من ماء زمزم المبارك",
+          desc_fr: "Boisson bénie et guérison",
+          desc_ar: "ماء زمزم لما شُرب له"
+        }
+      ]
     },
     {
       step: "08",
@@ -141,8 +314,25 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "حافلات ترددية خاصة على مدار الساعة" : "Navettes privées 24h/24 disponibles",
         isArabic ? "خدمات فندقية متكاملة" : "Room service & conciergerie 24/7"
       ],
-      image: "https://images.unsplash.com/photo-1580418827493-f2b22c0a76cb?q=80&w=1000&auto=format&fit=crop",
-      icon: Hotel
+      icon: Hotel,
+      images: [
+        {
+          id: "def-08-1",
+          url: "https://images.unsplash.com/photo-1580418827493-f2b22c0a76cb?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Vue Imprenable sur le Haram",
+          title_ar: "إطلالة مباشرة على الحرم المكي",
+          desc_fr: "Tours Abraj Al-Bait & Hôtels 5★",
+          desc_ar: "إقامة ملكية في قلب مكة المكرمة"
+        },
+        {
+          id: "def-08-2",
+          url: "https://images.unsplash.com/photo-1566073771259-6a8506099945?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Chambres & Suites Spacieuses",
+          title_ar: "غرف وأجنحة فندقية راقية",
+          desc_fr: "Équipements modernes et confort optimal",
+          desc_ar: "أعلى معايير النظافة والراحة التامة"
+        }
+      ]
     },
     {
       step: "09",
@@ -157,8 +347,25 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "شرح تفصيلي لمحطات السيرة" : "Récits historiques et spirituels",
         isArabic ? "فرص لالتقاط صور تذكارية" : "Halte panoramique à Jabal Ar-Rahmah"
       ],
-      image: "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1000&auto=format&fit=crop",
-      icon: MapPin
+      icon: MapPin,
+      images: [
+        {
+          id: "def-09-1",
+          url: "https://images.unsplash.com/photo-1542838132-92c53300491e?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Mont Arafat — Jabal Ar-Rahmah",
+          title_ar: "جبل الرحمة بصعيد عرفات الطاهر",
+          desc_fr: "Lieu emblématique du pèlerinage",
+          desc_ar: "وقفة إيمانية واستشعار لمشاعر الحج"
+        },
+        {
+          id: "def-09-2",
+          url: "https://images.unsplash.com/photo-1580418827493-f2b22c0a76cb?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Grotte de Hira — Mont Al-Nour",
+          title_ar: "جبل النور وغار حراء المبارك",
+          desc_fr: "Lieu de révélation de la première sourate",
+          desc_ar: "مهبط الوحي وأول آيات القرآن الكريم"
+        }
+      ]
     },
     {
       step: "10",
@@ -173,10 +380,72 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
         isArabic ? "رحلة عودة مباشرة ومريحة" : "Vol direct vers l'Algérie",
         isArabic ? "استقبال ووداع بالورود والدعاء" : "Accompagnement jusqu'à l'embarquement"
       ],
-      image: "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=1000&auto=format&fit=crop",
-      icon: Gift
+      icon: Gift,
+      images: [
+        {
+          id: "def-10-1",
+          url: "https://images.unsplash.com/photo-1512453979798-5ea266f8880c?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Eau de Zamzam 5L Offerte",
+          title_ar: "عبوة ماء زمزم الرسمية هدية",
+          desc_fr: "Bidon scellé et certifié offert par l'agence",
+          desc_ar: "عبوة 5 لتر أصلية ومغلفة لكل معتمر"
+        },
+        {
+          id: "def-10-2",
+          url: "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?q=80&w=1000&auto=format&fit=crop",
+          title_fr: "Vol Direct Retour vers l'Algérie",
+          title_ar: "رحلة العودة المباركة إلى أرض الوطن",
+          desc_fr: "« Omra Maqboulah & Djanb Maghfour »",
+          desc_ar: "عمرة مقبولة وذنب مغفور وسعي مشكور"
+        }
+      ]
     }
   ];
+
+  // Fetch from Supabase
+  useEffect(() => {
+    fetchSteps();
+  }, [isArabic]);
+
+  const fetchSteps = async () => {
+    setLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from('website_omra_steps')
+        .select('*')
+        .eq('is_active', true)
+        .order('ordre', { ascending: true });
+
+      if (!error && data && data.length > 0) {
+        // Map database data
+        const mapped = data.map((item, idx) => {
+          const stepIcon = ICON_MAP[item.icon_name] || MapPin;
+          return {
+            id: item.id,
+            step: item.step_number || String(idx + 1).padStart(2, '0'),
+            location: isArabic ? (item.location_ar || item.location_fr) : item.location_fr,
+            locationBadge: isArabic ? (item.location_badge_ar || item.location_badge_fr) : item.location_badge_fr,
+            title: isArabic ? (item.title_ar || item.title_fr) : item.title_fr,
+            desc: isArabic ? (item.desc_ar || item.desc_fr) : item.desc_fr,
+            perks: Array.isArray(isArabic ? item.perks_ar : item.perks_fr) 
+              ? (isArabic ? item.perks_ar : item.perks_fr) 
+              : (Array.isArray(item.perks_fr) ? item.perks_fr : []),
+            images: Array.isArray(item.images) ? item.images : [],
+            icon: stepIcon
+          };
+        });
+        setSteps(mapped);
+      } else {
+        // Fallback to rich defaults
+        setSteps(defaultTimelineSteps);
+      }
+    } catch (err) {
+      console.warn('Using default Omra steps fallback:', err);
+      setSteps(defaultTimelineSteps);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const pillars = [
     {
@@ -198,83 +467,82 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
       title: isArabic ? "أسطول نقل سياحي حديث" : "Flotte de Transport Récente & VIP",
       desc: isArabic 
         ? "جميع تنقلاتنا تتم بحافلات موديل حديث مجهزة بكافة وسائل الراحة والتكييف الممتاز."
-        : "Autocars climatisés grand tourisme récents avec prises USB, sièges ergonomiques et chauffeurs certifiés."
+        : "Tous nos déplacements s'effectuent à bord d'autocars modernes, climatisés et équipés de sièges tout confort."
     },
     {
-      icon: Clock,
-      title: isArabic ? "متابعة ورعاية على مدار الساعة" : "Assistance Médicale & Logistique 24/7",
+      icon: Gift,
+      title: isArabic ? "مفاجآت وهدايا تذكارية قيمة" : "Pack Cadeaux & Eau de Zamzam",
       desc: isArabic 
-        ? "فريقنا الميداني متواجد معكم في مكة والمدينة لتقديم الدعم الفوري لأي ظرف طارئ."
-        : "Une équipe permanente sur place à Médine et La Mecque pour répondre à tous vos besoins en temps réel."
+        ? "عبوة ماء زمزم 5 لتر رسمية لكل معتمر، حقائب سفر عالية الجودة، ومستلزمات الإحرام."
+        : "Un bidon de 5L de Zamzam certifié scellé remis à chaque pèlerin, sacs de voyage et kit pèlerin offert."
     }
   ];
 
   const faqs = [
     {
-      q: isArabic ? "ما هي الإجراءات المطلوبة لاستخراج تأشيرة العمرة؟" : "Quelles sont les formalités pour l'obtention du visa Omra ?",
+      q: isArabic ? "ما هي شروط وإجراءات التسجيل في رحلة العمرة؟" : "Quelles sont les formalités requises pour s'inscrire ?",
       a: isArabic 
-        ? "نوفر لكم معالجة سريعة لملف التأشيرة الإلكترونية الرسمية، كل ما نحتاجه هو جواز سفر ساري المفعول لمدة لا تقل عن 6 أشهر وصورة شمسية بخلفية بيضاء."
-        : "Notre agence s'occupe de l'intégralité de la procédure du visa officiel électronique. Il vous suffit de nous fournir un passeport valide plus de 6 mois et une photo d'identité récente."
+        ? "جواز سفر بيومتري صالح لأكثر من 6 أشهر، صور شمسية بخلفية بيضاء، وشهادة طبية أو لقاحات سارية المفعول حسب اشتراطات وزارة الحج والعمرة السعودية."
+        : "Un passeport biométrique valide au moins 6 mois après la date de retour, des photos d'identité sur fond blanc et les vaccinations obligatoires en vigueur requises par les autorités saoudiennes."
     },
     {
-      q: isArabic ? "هل الصلاة في الروضة الشريفة مؤكدة لجميع المعتمرين؟" : "La réservation pour la Noble Rawdah est-elle garantie ?",
+      q: isArabic ? "هل تتكفل الوكالة بجميع إجراءات تأشيرة العمرة وتصاريح الروضة؟" : "L'agence gère-t-elle le visa et les permis de la Rawdah ?",
       a: isArabic 
-        ? "نعم، تتولى وكالتنا استخراج تصاريح الدخول الرسمية للروضة الشريفة عبر تطبيق نسك لجميع المعتمرين (رجالاً ونساءً) في الأوقات المخصصة رسمياً."
-        : "Absolument. Notre équipe administrative réserve et valide les créneaux officiels sur la plateforme Nusuk pour l'ensemble des pèlerins (hommes et femmes)."
+        ? "نعم، نضمن استخراج التأشيرة الإلكترونية الرسمية وحجز المواعيد المؤكدة لدخول الروضة الشريفة عبر تطبيق نسك المعتمد لكافة المعتمرين."
+        : "Absolument. Nous prenons en charge la délivrance intégrale du visa électronique et effectuons les réservations officielles des créneaux de la Noble Rawdah via la plateforme officielle Nusuk."
     },
     {
-      q: isArabic ? "كيف يتم التكفل بكبار السن والأشخاص ذوي الاحتياجات الخاصة؟" : "Comment sont accompagnées les personnes âgées ou à mobilité réduite ?",
+      q: isArabic ? "ما هي المسافة الفاصلة بين الفنادق والحرمين الشريفين؟" : "À quelle distance des mosquées saintes sont situés les hôtels ?",
       a: isArabic 
-        ? "نولي عناية فائقة لكبار السن من خلال توفير كراسي متحركة، واختيار فنادق قريبة جداً، ومساعدة مباشرة من مرشدينا أثناء أداء الطواف والسعي."
-        : "Nous accordons une attention toute particulière aux aînés avec mise à disposition de fauteuils roulants, choix d'hôtels très proches et aide de nos guides pendant le Tawaf et le Sa'i."
+        ? "فنادقنا بالمدينة تقع بالمنطقة المركزية على بعد 2 إلى 5 دقائق مشياً، وفي مكة نوفر فنادق مواجهة لساحات الحرم أو فنادق فاخرة بحافلات ترددية 24/24س."
+        : "À Médine, nos hôtels sont situés dans la zone centrale à 2-5 minutes à pied du Haram. À La Mecque, nous proposons des établissements face à l'esplanade ou avec navettes VIP privées 24h/24."
     },
     {
-      q: isArabic ? "هل يحصل كل معتمر على عبوة ماء زمزم عند العودة؟" : "Chaque pèlerin reçoit-il son bidon d'eau de Zamzam au retour ?",
+      q: isArabic ? "هل توجد رحلات مباشرة بدون توقف؟" : "Les vols sont-ils directs sans escale ?",
       a: isArabic 
-        ? "نعم، يحصل كل معتمر مسافر مع وكالتنا على عبوة 5 لتر أصلية ومختومة من ماء زمزم المبارك مباشرة في مطار جدة قبل صعود الطائرة."
-        : "Oui, chaque pèlerin voyageant avec notre agence reçoit un bidon officiel scellé de 5 litres d'eau bénite de Zamzam à l'aéroport de Djeddah avant l'embarquement."
+        ? "نعم، جميع برامجنا المعتمدة تنطلق عبر رحلات جوية مباشرة دون ترانزيت من مطارات الجزائر، وهران، وقسنطينة نحو المدينة المنورة وجدة."
+        : "Oui, la majorité de nos programmes sont opérés en vols directs sans escale au départ d'Alger, Oran et Constantine à destination de Médine et Djeddah."
     }
   ];
 
+  const currentSteps = steps.length > 0 ? steps : defaultTimelineSteps;
+
   return (
-    <main className="min-h-screen bg-slate-50/50 dark:bg-obsidian-950 text-slate-900 dark:text-slate-100 overflow-x-hidden pt-24 pb-20 transition-colors duration-300">
+    <main className="min-h-screen bg-slate-50/50 dark:bg-obsidian-950 text-slate-900 dark:text-slate-100 transition-colors duration-300">
       
-      {/* ── 1. CINEMATIC HERO SECTION ───────────────────────────────────── */}
-      <section className="relative py-16 sm:py-24 px-4 sm:px-6 overflow-hidden">
+      {/* ── 1. HERO SECTION ────────────────────────────────────────────── */}
+      <section className="relative pt-28 pb-16 sm:pt-36 sm:pb-24 px-4 sm:px-6 overflow-hidden border-b border-slate-200/60 dark:border-white/5">
+        
         {/* Ambient Glows */}
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-brand-500/15 dark:bg-brand-500/10 rounded-full blur-3xl pointer-events-none" />
-        <div className="absolute top-1/3 right-10 w-[300px] h-[300px] bg-amber-500/10 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[350px] bg-brand-500/10 dark:bg-brand-500/15 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute top-10 right-10 w-72 h-72 bg-emerald-500/10 rounded-full blur-2xl pointer-events-none" />
 
         <div className="max-w-5xl mx-auto text-center relative z-10 space-y-6">
           
           {/* Badge */}
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-brand-500/10 border border-brand-500/20 text-brand-600 dark:text-brand-400 text-xs font-black uppercase tracking-wider shadow-sm">
-            <Compass size={15} className="animate-spin-slow text-brand-500" />
+          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-brand-500/10 dark:bg-brand-500/20 text-brand-600 dark:text-brand-400 border border-brand-500/20 text-xs sm:text-sm font-bold tracking-wide shadow-xs">
+            <Sparkles size={14} className="animate-pulse" />
             <span>{t('prog_badge')}</span>
           </div>
 
-          {/* H1 Headline (Wide, Max 2-3 lines) */}
-          <h1 className="text-3xl sm:text-5xl md:text-6xl font-black tracking-tight text-slate-900 dark:text-white leading-[1.12]">
-            {isArabic ? (
-              <>رحلة العمر : برنامج العمرة المتكامل في <span className="text-brand-600 dark:text-brand-400">10 محطات مباركة</span></>
-            ) : (
-              <>Le Voyage d'une Vie : Notre Programme Omra en <span className="text-brand-600 dark:text-brand-400">10 Étapes Clés</span></>
-            )}
+          {/* Main Title */}
+          <h1 className="text-3xl sm:text-5xl md:text-6xl font-black text-slate-900 dark:text-white tracking-tight leading-tight max-w-4xl mx-auto">
+            {t('prog_hero_title')}
           </h1>
 
           {/* Subtitle */}
-          <p className="text-base sm:text-lg text-slate-600 dark:text-slate-300 max-w-3xl mx-auto leading-relaxed">
+          <p className="text-sm sm:text-lg text-slate-600 dark:text-slate-300 max-w-3xl mx-auto leading-relaxed">
             {t('prog_hero_subtitle')}
           </p>
 
-          {/* Dual CTAs */}
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+          {/* Actions */}
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3.5 pt-4">
             <Link
               to="/omra"
-              className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-brand-500 hover:bg-brand-600 active:scale-[0.98] text-white font-bold text-sm shadow-lg shadow-brand-500/25 hover:shadow-brand-500/35 transition-all flex items-center justify-center gap-2"
+              className="w-full sm:w-auto px-7 py-3.5 rounded-2xl bg-brand-600 hover:bg-brand-700 text-white font-black text-sm shadow-lg shadow-brand-500/25 transition-all flex items-center justify-center gap-2 group"
             >
               <span>{t('prog_cta_catalog')}</span>
-              <ArrowIcon size={16} />
+              <ArrowIcon size={16} className="group-hover:translate-x-1 transition-transform" />
             </Link>
 
             <button
@@ -329,13 +597,13 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
             <div className="hidden md:block absolute top-0 bottom-0 left-1/2 -translate-x-1/2 w-1 bg-gradient-to-b from-brand-500 via-emerald-500 to-amber-500 rounded-full opacity-40" />
 
             <div className="space-y-12 sm:space-y-16">
-              {timelineSteps.map((item, index) => {
+              {currentSteps.map((item, index) => {
                 const isEven = index % 2 === 0;
-                const StepIcon = item.icon;
+                const StepIcon = item.icon || MapPin;
 
                 return (
                   <div 
-                    key={item.step}
+                    key={item.id || item.step || index}
                     className={cn(
                       "relative flex flex-col md:flex-row items-center gap-8",
                       isEven ? "md:flex-row-reverse" : ""
@@ -353,7 +621,7 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
                           </span>
 
                           <span className="text-xs font-mono font-black text-slate-400 dark:text-slate-500">
-                            ÉTAPE {item.step}
+                            {isArabic ? `المحطة ${item.step}` : `ÉTAPE ${item.step}`}
                           </span>
                         </div>
 
@@ -368,14 +636,16 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
                         </p>
 
                         {/* Inclusions / Highlights Badges */}
-                        <div className="space-y-2 pt-3 border-t border-slate-100 dark:border-white/5">
-                          {item.perks.map((perk, pIdx) => (
-                            <div key={pIdx} className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300">
-                              <CheckCircle2 size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
-                              <span>{perk}</span>
-                            </div>
-                          ))}
-                        </div>
+                        {Array.isArray(item.perks) && item.perks.length > 0 && (
+                          <div className="space-y-2 pt-3 border-t border-slate-100 dark:border-white/5">
+                            {item.perks.map((perk, pIdx) => (
+                              <div key={pIdx} className="flex items-center gap-2 text-xs font-bold text-slate-700 dark:text-slate-300">
+                                <CheckCircle2 size={14} className="text-emerald-600 dark:text-emerald-400 shrink-0" />
+                                <span>{perk}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                       </div>
                     </div>
@@ -387,27 +657,14 @@ export const UmrahProgramPage = ({ onOpenQuoteModal }) => {
                       </div>
                     </div>
 
-                    {/* Image / Visual Card (50% width on Desktop) */}
+                    {/* Image Slider Card (50% width on Desktop) */}
                     <div className="w-full md:w-1/2">
-                      <div className="relative h-60 sm:h-72 w-full rounded-3xl overflow-hidden shadow-md group">
-                        <img 
-                          src={item.image} 
-                          alt={item.title}
-                          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-700 ease-out"
-                          loading="lazy"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                        
-                        <div className="absolute bottom-4 left-4 right-4 text-white">
-                          <span className="text-[11px] font-bold text-brand-300 flex items-center gap-1.5 mb-0.5">
-                            <MapPin size={12} />
-                            <span>{item.location}</span>
-                          </span>
-                          <span className="text-xs font-medium text-white/90 line-clamp-1">
-                            {item.title}
-                          </span>
-                        </div>
-                      </div>
+                      <OmraStepImageSlider 
+                        images={item.images}
+                        stepTitle={item.title}
+                        stepLocation={item.location}
+                        isArabic={isArabic}
+                      />
                     </div>
 
                   </div>
