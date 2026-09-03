@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useParams, useNavigate, useLocation } from 'react-router-dom';
 import Layout from '@/components/Layout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -18,8 +18,9 @@ import {
   User, Wallet, Calculator, TrendingUp, Table, Loader2,
   Printer, Edit2, Upload, File, ChevronDown, CheckCircle,
   AlertCircle, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight,
-  FolderOpen, Camera, UserCheck, X, Check
+  FolderOpen, Camera, UserCheck, X, Check, Split, CheckSquare, Square, CheckCircle2
 } from 'lucide-react';
+import { Badge } from '@/components/ui/badge';
 import ClientForm from '@/components/ClientForm';
 import { ReactSortable } from "react-sortablejs";
 
@@ -79,7 +80,6 @@ const mapCamelToEnregistrement = (cam, interList) => ({
   total_resto: Number(cam.totalResto) || 0,
   total_enfants_sans_lit: Number(cam.totalEnfantsSansLit) || 0,
   total_brut: Number(cam.totalBrut) || 0,
-  total_commission: Number(cam.totalCommission) || 0,
   total_commission: Number(cam.totalCommission) || 0,
   total_net: Number(cam.totalNet) || 0,
   client_id: cam.clientId || null,
@@ -543,11 +543,142 @@ const OmraGroupDetails = () => {
   const [existingOccupants, setExistingOccupants] = useState([]);
   const [editingId, setEditingId] = useState(null);
 
-  // --- Payment Modal State ---
+  // --- Payment Modal State & Helper ---
+  const getEnregistrementMembersWithDues = (enr) => {
+    if (!enr) return [];
+    const enrHotelConfig = groupe?.hotels?.find(h => h.hotelId === enr.hotelId);
+    const tousPelerins = [
+      ...(enr.pelerins || []).map((p, idx) => ({ ...p, memberType: 'pelerin', memberKey: `pelerin-${idx}`, isEnfantSansLit: false, originalIndex: idx })),
+      ...(enr.enfantsSansLit || []).map((enf, idx) => ({ ...enf, memberType: 'enfant', memberKey: `enfant-${idx}`, tarifPerso: enf.tarif, chd: true, isEnfantSansLit: true, originalIndex: idx }))
+    ];
+
+    const passagersAdultes = tousPelerins.filter(p => !p.guide && !p.chd && !p.isEnfantSansLit);
+    const reductionPartagee = passagersAdultes.length > 0 ? Number(enr.reduction || 0) / passagersAdultes.length : 0;
+
+    return tousPelerins.map((pelerin, index) => {
+      const isAdult = !pelerin.guide && !pelerin.chd && !pelerin.isEnfantSansLit;
+      const tarifLit = pelerin.guide 
+        ? 0 
+        : (pelerin.isEnfantSansLit 
+            ? Number(pelerin.tarifPerso || 0) 
+            : (pelerin.tarifPerso ? Number(pelerin.tarifPerso) : (Number(enrHotelConfig?.[CHAMBRE_KEYS[enr.typeChambre]]) || 0)));
+      
+      let reduction = (pelerin.guide || !pelerin.chd || pelerin.isEnfantSansLit) ? 0 : (Number(enrHotelConfig?.reductionChd) || 0);
+      if (isAdult) reduction += reductionPartagee;
+      
+      let extraCosts = 0;
+      if (pelerin.restauration && !pelerin.guide && !pelerin.isEnfantSansLit) extraCosts += Number(enrHotelConfig?.restauration || 0);
+      
+      const commission = (pelerin.guide || pelerin.isEnfantSansLit) ? 0 : Number(enr.commissionCustom || 0);
+      
+      let totalDu = tarifLit - reduction + extraCosts;
+      if (enr.paiementRabatteur) {
+        totalDu -= commission;
+      }
+      totalDu = Math.max(0, totalDu);
+
+      return {
+        memberKey: pelerin.memberKey || `member-${index}`,
+        nom: pelerin.nom || (pelerin.isEnfantSansLit ? `Bébé #${index + 1}` : `Pèlerin #${index + 1}`),
+        sexe: pelerin.sexe || 'H',
+        isEnfantSansLit: !!pelerin.isEnfantSansLit,
+        chd: !!pelerin.chd,
+        guide: !!pelerin.guide,
+        restauration: !!pelerin.restauration,
+        tarifLit,
+        extraCosts,
+        reduction,
+        commission,
+        totalDu,
+        rawPelerin: pelerin
+      };
+    });
+  };
+
+  const getEnregistrementMembersFinancials = (enr, excludePaymentIds = []) => {
+    if (!enr) return [];
+    const members = getEnregistrementMembersWithDues(enr);
+    const enrPaiements = paiements.filter(p => p.enregistrementId === enr.id && !excludePaymentIds.includes(p.id));
+
+    // 1. Direct payments match by exact member name
+    const memberDirectPayments = {};
+    const usedPaymentIds = new Set();
+
+    members.forEach(m => {
+      memberDirectPayments[m.memberKey] = 0;
+      const mNomLower = (m.nom || '').trim().toLowerCase();
+      if (!mNomLower) return;
+
+      enrPaiements.forEach(p => {
+        if (usedPaymentIds.has(p.id)) return;
+        const pNomLower = (p.nomClient || '').trim().toLowerCase();
+        if (pNomLower && pNomLower === mNomLower) {
+          memberDirectPayments[m.memberKey] += Number(p.montantDZD) || 0;
+          usedPaymentIds.add(p.id);
+        }
+      });
+    });
+
+    // 2. Unassigned pool from payments not directly tied to a specific member
+    let unassignedPool = enrPaiements
+      .filter(p => !usedPaymentIds.has(p.id))
+      .reduce((sum, p) => sum + (Number(p.montantDZD) || 0), 0);
+
+    // 3. Compute totalPaye, reste, and etat for each member
+    return members.map(m => {
+      let totalPaye = memberDirectPayments[m.memberKey] || 0;
+      
+      // If member still owes and unassignedPool has money, allocate from pool
+      if (totalPaye < m.totalDu && unassignedPool > 0) {
+        const needed = m.totalDu - totalPaye;
+        const takeFromPool = Math.min(needed, unassignedPool);
+        totalPaye += takeFromPool;
+        unassignedPool -= takeFromPool;
+      }
+
+      const reste = Math.max(0, m.totalDu - totalPaye);
+
+      let etat = 'pending';
+      let etatColor = 'bg-red-500 text-white';
+      let etatLabel = 'En attente';
+      let etatBg = '#ef4444';
+
+      if (reste === 0 && m.totalDu > 0) {
+        etat = 'payé';
+        etatColor = 'bg-green-500 text-white';
+        etatLabel = 'Payé';
+        etatBg = '#16a34a';
+      } else if (m.totalDu === 0 && reste === 0) {
+        etat = 'payé';
+        etatColor = 'bg-green-500 text-white';
+        etatLabel = 'Payé';
+        etatBg = '#16a34a';
+      } else if (totalPaye > 0) {
+        etat = 'versement';
+        etatColor = 'bg-amber-500 text-white';
+        etatLabel = 'Versement';
+        etatBg = '#f59e0b';
+      }
+
+      return {
+        ...m,
+        totalPaye,
+        reste,
+        etat,
+        etatColor,
+        etatLabel,
+        etatBg
+      };
+    });
+  };
+
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [currentEnregistrementId, setCurrentEnregistrementId] = useState(null);
   const emptyPaymentForm = {
     nomClient: '',
+    selectedMemberKeys: [],
+    splitMode: 'equal', // 'equal' | 'custom'
+    customAmounts: {},
     datePaiement: new Date().toISOString().split('T')[0],
     numBon: '',
     montantOriginal: '',
@@ -558,6 +689,54 @@ const OmraGroupDetails = () => {
   const [paymentFormData, setPaymentFormData] = useState(emptyPaymentForm);
   const [isCommissionModalOpen, setIsCommissionModalOpen] = useState(false);
   const [commissionFormData, setCommissionFormData] = useState({ intermediaire: '', montant: '', date: '', note: '' });
+  const [editingCommissionId, setEditingCommissionId] = useState(null);
+  const [editingPaymentId, setEditingPaymentId] = useState(null);
+  const [editingPaymentIds, setEditingPaymentIds] = useState([]);
+
+  // --- Grouped Payments (1 row per receipt / payment transaction) ---
+  const groupedPaiements = useMemo(() => {
+    const groups = [];
+    const map = new Map();
+
+    groupePaiements.forEach((p) => {
+      let key = null;
+      if (p.numBon && p.numBon.trim() !== '') {
+        key = `bon_${p.enregistrementId || 'noenr'}_${p.numBon.trim().toLowerCase()}_${p.datePaiement}`;
+      } else if (p.createdAt) {
+        const ts = Math.floor(new Date(p.createdAt).getTime() / 5000);
+        key = `batch_${p.enregistrementId || 'noenr'}_${p.datePaiement}_${ts}`;
+      } else {
+        key = `single_${p.id}`;
+      }
+
+      if (!map.has(key)) {
+        const groupObj = {
+          groupKey: key,
+          enregistrementId: p.enregistrementId,
+          datePaiement: p.datePaiement,
+          numBon: p.numBon,
+          devise: p.devise || 'DZD',
+          tauxChange: p.tauxChange,
+          paiementRabatteur: p.paiementRabatteur,
+          createdAt: p.createdAt,
+          items: [],
+          totalMontantOriginal: 0,
+          totalMontantDZD: 0,
+          paymentIds: []
+        };
+        map.set(key, groupObj);
+        groups.push(groupObj);
+      }
+
+      const grp = map.get(key);
+      grp.items.push(p);
+      grp.paymentIds.push(p.id);
+      grp.totalMontantOriginal += Number(p.montantOriginal) || 0;
+      grp.totalMontantDZD += Number(p.montantDZD) || 0;
+    });
+
+    return groups;
+  }, [groupePaiements]);
   
   const selectedEnrForPayment = groupeEnregistrements.find(x => x.id === currentEnregistrementId);
   const hasPreviousPayments = groupePaiements.some(p => p.enregistrementId === currentEnregistrementId);
@@ -1123,22 +1302,220 @@ const OmraGroupDetails = () => {
     }
   };
 
+  // --- Payment Helpers & Max Calculations ---
+  const getMemberMaxAllowed = (member) => {
+    if (!member) return Infinity;
+    const isForeign = paymentFormData.devise !== 'DZD';
+    const rate = Number(paymentFormData.tauxChange) || 0;
+    const reste = Number(member.reste) || 0;
+    if (isForeign && rate > 0) {
+      return Math.max(0, Number((reste / rate).toFixed(2)));
+    }
+    return Math.max(0, reste);
+  };
+
+  const handleCustomAmountChange = (memberKey, value) => {
+    const member = currentEnrMembersForPayment.find(m => m.memberKey === memberKey);
+    const maxAllowed = member ? getMemberMaxAllowed(member) : Infinity;
+
+    let newValue = value;
+    if (value !== '' && !isNaN(Number(value))) {
+      const numVal = Number(value);
+      if (numVal < 0) {
+        newValue = '0';
+      } else if (numVal > maxAllowed) {
+        newValue = maxAllowed.toString();
+      }
+    }
+
+    setPaymentFormData(prev => ({
+      ...prev,
+      customAmounts: {
+        ...prev.customAmounts,
+        [memberKey]: newValue
+      }
+    }));
+  };
+
   // --- Payment Handlers ---
   const handleOpenPayment = (enr) => {
-    const foundClient = clients.find(c => c.id === enr.clientId);
-    const firstPelerin = enr.pelerins?.[0]?.nom || '';
+    setEditingPaymentId(null);
+    setEditingPaymentIds([]);
+    const members = getEnregistrementMembersFinancials(enr);
+    const membersWithReste = members.filter(m => m.reste > 0);
+    const selectedMembers = membersWithReste.length > 0 ? membersWithReste : members;
+    const allKeys = selectedMembers.map(m => m.memberKey);
+    const defaultNomClient = selectedMembers.map(m => m.nom).filter(Boolean).join(' & ') || clients.find(c => c.id === enr.clientId)?.nom || '';
+    
+    const initialCustomAmounts = {};
+    members.forEach(m => {
+      initialCustomAmounts[m.memberKey] = m.reste > 0 ? m.reste.toString() : '';
+    });
+
+    const totalResteSelected = selectedMembers.reduce((sum, m) => sum + (m.reste || 0), 0);
+
     setPaymentFormData({
       ...emptyPaymentForm,
-      nomClient: foundClient ? foundClient.nom : firstPelerin
+      nomClient: defaultNomClient,
+      selectedMemberKeys: allKeys.length > 0 ? allKeys : ['default'],
+      splitMode: 'equal',
+      montantOriginal: totalResteSelected > 0 ? totalResteSelected.toString() : '',
+      customAmounts: initialCustomAmounts,
+      datePaiement: new Date().toISOString().split('T')[0]
     });
     setCurrentEnregistrementId(enr.id);
     setIsPaymentModalOpen(true);
   };
 
   const handleOpenPaymentGlobal = () => {
+    setEditingPaymentId(null);
+    setEditingPaymentIds([]);
     setPaymentFormData(emptyPaymentForm);
     setCurrentEnregistrementId('');
     setIsPaymentModalOpen(true);
+  };
+
+  const handleSelectEnregistrementForPayment = (enrId) => {
+    setCurrentEnregistrementId(enrId);
+    const enr = groupeEnregistrements.find(x => x.id === enrId);
+    if (enr) {
+      const members = getEnregistrementMembersFinancials(enr, editingPaymentIds);
+      const membersWithReste = members.filter(m => m.reste > 0);
+      const selectedMembers = membersWithReste.length > 0 ? membersWithReste : members;
+      const allKeys = selectedMembers.map(m => m.memberKey);
+      const defaultNomClient = selectedMembers.map(m => m.nom).filter(Boolean).join(' & ') || clients.find(c => c.id === enr.clientId)?.nom || '';
+      
+      const initialCustomAmounts = {};
+      members.forEach(m => {
+        initialCustomAmounts[m.memberKey] = m.reste > 0 ? m.reste.toString() : '';
+      });
+
+      const totalResteSelected = selectedMembers.reduce((sum, m) => sum + (m.reste || 0), 0);
+
+      setPaymentFormData(prev => ({
+        ...prev,
+        nomClient: defaultNomClient,
+        selectedMemberKeys: allKeys.length > 0 ? allKeys : ['default'],
+        splitMode: 'equal',
+        montantOriginal: totalResteSelected > 0 ? totalResteSelected.toString() : '',
+        customAmounts: initialCustomAmounts
+      }));
+    } else {
+      setPaymentFormData(prev => ({
+        ...prev,
+        selectedMemberKeys: [],
+        nomClient: '',
+        montantOriginal: '',
+        customAmounts: {}
+      }));
+    }
+  };
+
+  const handleTogglePaymentMember = (memberKey) => {
+    const enr = groupeEnregistrements.find(x => x.id === currentEnregistrementId);
+    const members = enr ? getEnregistrementMembersFinancials(enr, editingPaymentIds) : [];
+    
+    setPaymentFormData(prev => {
+      const isSelected = prev.selectedMemberKeys.includes(memberKey);
+      const newKeys = isSelected
+        ? prev.selectedMemberKeys.filter(k => k !== memberKey)
+        : [...prev.selectedMemberKeys, memberKey];
+      
+      const activeMembers = members.filter(m => newKeys.includes(m.memberKey));
+      const autoNom = activeMembers.map(m => m.nom).join(' & ');
+
+      return {
+        ...prev,
+        selectedMemberKeys: newKeys,
+        nomClient: autoNom || prev.nomClient
+      };
+    });
+  };
+
+  const handleSelectAllPaymentMembers = () => {
+    const enr = groupeEnregistrements.find(x => x.id === currentEnregistrementId);
+    const members = enr ? getEnregistrementMembersFinancials(enr, editingPaymentIds) : [];
+    const allKeys = members.map(m => m.memberKey);
+    setPaymentFormData(prev => ({
+      ...prev,
+      selectedMemberKeys: allKeys,
+      nomClient: members.map(m => m.nom).join(' & ')
+    }));
+  };
+
+  const handleDeselectAllPaymentMembers = () => {
+    setPaymentFormData(prev => ({
+      ...prev,
+      selectedMemberKeys: [],
+      nomClient: '',
+      montantOriginal: ''
+    }));
+  };
+
+  const handleOpenEditPaymentGroup = (groupObj) => {
+    const ids = groupObj.paymentIds || (groupObj.id ? [groupObj.id] : []);
+    setEditingPaymentIds(ids);
+    setEditingPaymentId(ids[0] || null);
+
+    const enr = groupeEnregistrements.find(x => x.id === groupObj.enregistrementId);
+    const members = enr ? getEnregistrementMembersFinancials(enr, ids) : [];
+
+    const items = groupObj.items || [groupObj];
+    const selectedKeys = [];
+    const customAmounts = {};
+
+    members.forEach(m => {
+      const mNomLower = (m.nom || '').trim().toLowerCase();
+      const matchedItem = items.find(item => (item.nomClient || '').trim().toLowerCase() === mNomLower);
+      if (matchedItem) {
+        selectedKeys.push(m.memberKey);
+        customAmounts[m.memberKey] = matchedItem.montantOriginal !== undefined ? matchedItem.montantOriginal.toString() : '';
+      } else {
+        customAmounts[m.memberKey] = m.reste > 0 ? m.reste.toString() : '';
+      }
+    });
+
+    if (selectedKeys.length === 0 && members.length > 0) {
+      selectedKeys.push(members[0].memberKey);
+    }
+
+    const defaultNomClient = items.map(i => i.nomClient).filter(Boolean).join(' & ');
+    const isCustom = items.length > 1 && items.some(i => i.montantOriginal !== items[0].montantOriginal);
+
+    setPaymentFormData({
+      nomClient: defaultNomClient,
+      selectedMemberKeys: selectedKeys,
+      splitMode: isCustom ? 'custom' : 'equal',
+      customAmounts: customAmounts,
+      datePaiement: groupObj.datePaiement ? new Date(groupObj.datePaiement).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      numBon: groupObj.numBon || '',
+      montantOriginal: groupObj.totalMontantOriginal !== undefined ? groupObj.totalMontantOriginal.toString() : (groupObj.montantOriginal?.toString() || ''),
+      devise: groupObj.devise || 'DZD',
+      tauxChange: groupObj.tauxChange ? groupObj.tauxChange.toString() : '',
+      paiementRabatteur: !!groupObj.paiementRabatteur
+    });
+
+    setCurrentEnregistrementId(groupObj.enregistrementId || '');
+    setIsPaymentModalOpen(true);
+  };
+
+  const handleDeletePaymentGroup = async (groupObj) => {
+    const idsToDelete = groupObj.paymentIds || (groupObj.id ? [groupObj.id] : []);
+    const amountLabel = fmtDZD(groupObj.totalMontantDZD !== undefined ? groupObj.totalMontantDZD : (groupObj.montantDZD || 0));
+    const bonLabel = groupObj.numBon ? `(Reçu N° ${groupObj.numBon})` : '';
+    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement ce paiement ${bonLabel} d'un montant total de ${amountLabel} DZD ?`)) {
+      return;
+    }
+    const { error } = await supabase
+      .from('omra_paiements')
+      .delete()
+      .in('id', idsToDelete);
+
+    if (!error) {
+      setPaiements(prev => prev.filter(p => !idsToDelete.includes(p.id)));
+    } else {
+      alert('Erreur lors de la suppression : ' + error.message);
+    }
   };
 
   const handleSavePayment = async (e) => {
@@ -1148,35 +1525,143 @@ const OmraGroupDetails = () => {
       return;
     }
 
+    const enr = groupeEnregistrements.find(x => x.id === currentEnregistrementId);
+    if (!enr) {
+      alert("Enregistrement introuvable.");
+      return;
+    }
+
+    const idsToReplace = editingPaymentIds.length > 0 
+      ? editingPaymentIds 
+      : (editingPaymentId ? [editingPaymentId] : []);
+
+    const members = getEnregistrementMembersFinancials(enr, idsToReplace);
+    const selected = members.filter(m => paymentFormData.selectedMemberKeys?.includes(m.memberKey));
+
+    if (members.length > 0 && selected.length === 0) {
+      alert("Veuillez sélectionner au moins un membre pour ce versement.");
+      return;
+    }
+
     if (paymentFormData.devise !== 'DZD' && (!paymentFormData.tauxChange || Number(paymentFormData.tauxChange) <= 0)) {
       alert("Veuillez saisir un taux de change valide supérieur à 0 pour la devise " + paymentFormData.devise + ".");
       return;
     }
 
-    let montantDZD = Number(paymentFormData.montantOriginal);
-    if (paymentFormData.devise !== 'DZD') {
-      montantDZD = Number(paymentFormData.montantOriginal) * Number(paymentFormData.tauxChange);
-    }
-    const record = {
-      ...paymentFormData,
-      groupeId: id,
-      enregistrementId: currentEnregistrementId,
-      montantOriginal: Number(paymentFormData.montantOriginal),
-      tauxChange: paymentFormData.devise === 'DZD' ? null : Number(paymentFormData.tauxChange),
-      montantDZD
-    };
-    
-    const payload = mapCamelToPaiement(record);
+    const isForeign = paymentFormData.devise !== 'DZD';
+    const rate = isForeign ? Number(paymentFormData.tauxChange) : null;
 
-    const { data, error } = await supabase.from('omra_paiements').insert([payload]).select();
+    let paymentsToInsert = [];
+
+    if (selected.length === 0) {
+      const totalOrig = Number(paymentFormData.montantOriginal) || 0;
+      if (totalOrig <= 0) {
+        alert("Veuillez saisir un montant supérieur à 0.");
+        return;
+      }
+      const montantDZD = isForeign ? totalOrig * Number(paymentFormData.tauxChange) : totalOrig;
+      const resteGlobal = Math.max(0, (enr.totalNet || 0) - getEnregistrementPaid(enr.id, idsToReplace));
+      if (montantDZD > resteGlobal + 0.01) {
+        alert(`Le montant saisi (${fmtDZD(montantDZD)} DZD) dépasse le reste global du dossier (${fmtDZD(resteGlobal)} DZD).`);
+        return;
+      }
+      paymentsToInsert.push({
+        groupe_id: id,
+        enregistrement_id: currentEnregistrementId,
+        nom_client: paymentFormData.nomClient || 'Client',
+        date_paiement: paymentFormData.datePaiement,
+        num_bon: paymentFormData.numBon || null,
+        montant_original: totalOrig,
+        devise: paymentFormData.devise,
+        taux_change: rate,
+        montant_dzd: montantDZD,
+        paiement_rabatteur: paymentFormData.paiementRabatteur
+      });
+    } else if (paymentFormData.splitMode === 'custom') {
+      let totalSum = 0;
+      for (const m of selected) {
+        const amt = Number(paymentFormData.customAmounts[m.memberKey]) || 0;
+        if (amt <= 0) {
+          alert(`Veuillez saisir un montant supérieur à 0 pour ${m.nom}.`);
+          return;
+        }
+        const maxAllowed = getMemberMaxAllowed(m);
+        if (amt > maxAllowed + 0.01) {
+          alert(`Le montant pour ${m.nom} (${fmtDZD(amt)} ${paymentFormData.devise}) ne peut pas dépasser son reste à payer (${fmtDZD(maxAllowed)} ${paymentFormData.devise}).`);
+          return;
+        }
+        totalSum += amt;
+        const montantDZD = isForeign ? amt * Number(paymentFormData.tauxChange) : amt;
+        paymentsToInsert.push({
+          groupe_id: id,
+          enregistrement_id: currentEnregistrementId,
+          nom_client: m.nom,
+          date_paiement: paymentFormData.datePaiement,
+          num_bon: paymentFormData.numBon || null,
+          montant_original: amt,
+          devise: paymentFormData.devise,
+          taux_change: rate,
+          montant_dzd: montantDZD,
+          paiement_rabatteur: paymentFormData.paiementRabatteur
+        });
+      }
+      if (totalSum <= 0) {
+        alert("Le montant total doit être supérieur à 0.");
+        return;
+      }
+    } else {
+      const totalOrig = Number(paymentFormData.montantOriginal) || 0;
+      if (totalOrig <= 0) {
+        alert("Veuillez saisir un montant supérieur à 0.");
+        return;
+      }
+      const count = selected.length;
+      const amountPerMember = totalOrig / count;
+      const montantDZDPerMember = isForeign ? amountPerMember * Number(paymentFormData.tauxChange) : amountPerMember;
+
+      for (const m of selected) {
+        if (montantDZDPerMember > m.reste + 0.01) {
+          alert(`La répartition égale attribue ${fmtDZD(montantDZDPerMember)} DZD à ${m.nom}, ce qui dépasse son reste à payer (${fmtDZD(m.reste)} DZD).\nVeuillez ajuster le montant ou utiliser le mode 'Montants personnalisés'.`);
+          return;
+        }
+        paymentsToInsert.push({
+          groupe_id: id,
+          enregistrement_id: currentEnregistrementId,
+          nom_client: m.nom,
+          date_paiement: paymentFormData.datePaiement,
+          num_bon: paymentFormData.numBon || null,
+          montant_original: amountPerMember,
+          devise: paymentFormData.devise,
+          taux_change: rate,
+          montant_dzd: montantDZDPerMember,
+          paiement_rabatteur: paymentFormData.paiementRabatteur
+        });
+      }
+    }
+
+    if (idsToReplace.length > 0) {
+      const { error: delError } = await supabase
+        .from('omra_paiements')
+        .delete()
+        .in('id', idsToReplace);
+
+      if (delError) {
+        alert("Erreur lors de la mise à jour des anciens versements : " + delError.message);
+        return;
+      }
+    }
+
+    const { data, error } = await supabase.from('omra_paiements').insert(paymentsToInsert).select();
     if (!error && data) {
-      const savedPaiement = mapPaiementToCamel(data[0]);
-      setPaiements([savedPaiement, ...paiements]);
+      const savedPaiements = data.map(mapPaiementToCamel);
+      setPaiements(prev => [
+        ...savedPaiements,
+        ...prev.filter(p => !idsToReplace.includes(p.id))
+      ]);
 
       // Check if it's the first payment and update the enregistrement's paiementRabatteur
-      const enr = groupeEnregistrements.find(x => x.id === currentEnregistrementId);
-      const hasPreviousPayments = groupePaiements.some(p => p.enregistrementId === currentEnregistrementId);
-      if (enr && !hasPreviousPayments && enr.intermediaire) {
+      const hasPrev = groupePaiements.some(p => p.enregistrementId === currentEnregistrementId && !idsToReplace.includes(p.id));
+      if (enr && !hasPrev && enr.intermediaire) {
         const newTotalNet = paymentFormData.paiementRabatteur
           ? Math.max(0, (enr.totalBrut || 0) - (enr.totalCommission || 0) - (Number(enr.reduction) || 0))
           : Math.max(0, (enr.totalBrut || 0) - (Number(enr.reduction) || 0));
@@ -1187,32 +1672,37 @@ const OmraGroupDetails = () => {
           total_net: newTotalNet
         }).eq('id', enr.id);
         if (!enrError) {
-           setEnregistrements(enregistrements.map(x => x.id === enr.id ? updatedEnr : x));
+           setEnregistrements(prev => prev.map(x => x.id === enr.id ? updatedEnr : x));
         }
       }
 
       setIsPaymentModalOpen(false);
+      setEditingPaymentIds([]);
+      setEditingPaymentId(null);
     } else {
       alert('Erreur: ' + error?.message);
     }
   };
 
-  const handleDeletePayment = async (paymentId) => {
-    const { error } = await supabase.from('omra_paiements').delete().eq('id', paymentId);
-    if (!error) {
-      setPaiements(paiements.filter(p => p.id !== paymentId));
-    } else {
-      alert('Erreur: ' + error.message);
-    }
-  };
-
   // --- Commission Payment Handlers ---
   const handleOpenCommissionPayment = (intermediaireName, resteAPayer) => {
+    setEditingCommissionId(null);
     setCommissionFormData({
       intermediaire: intermediaireName,
       montant: resteAPayer.toString(),
       date: new Date().toISOString().split('T')[0],
       note: ''
+    });
+    setIsCommissionModalOpen(true);
+  };
+
+  const handleOpenEditCommission = (p) => {
+    setEditingCommissionId(p.id);
+    setCommissionFormData({
+      intermediaire: p.intermediaire,
+      montant: p.montant !== undefined && p.montant !== null ? p.montant.toString() : '',
+      date: p.date ? new Date(p.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0],
+      note: p.note || ''
     });
     setIsCommissionModalOpen(true);
   };
@@ -1231,16 +1721,34 @@ const OmraGroupDetails = () => {
        return;
     }
 
-    const { data, error } = await supabase.from('omra_paiements_commissions').insert([payload]).select();
-    if (!error && data) {
-      setPaiementsCommissions([mapCommissionToCamel(data[0], intermediaires), ...paiementsCommissions]);
-      setIsCommissionModalOpen(false);
+    if (editingCommissionId) {
+      const { data, error } = await supabase
+        .from('omra_paiements_commissions')
+        .update(payload)
+        .eq('id', editingCommissionId)
+        .select();
+      if (!error && data) {
+        setPaiementsCommissions(prev => prev.map(c => c.id === editingCommissionId ? mapCommissionToCamel(data[0], intermediaires) : c));
+        setIsCommissionModalOpen(false);
+        setEditingCommissionId(null);
+      } else {
+        alert('Erreur: ' + error?.message);
+      }
     } else {
-      alert('Erreur: ' + error?.message);
+      const { data, error } = await supabase.from('omra_paiements_commissions').insert([payload]).select();
+      if (!error && data) {
+        setPaiementsCommissions([mapCommissionToCamel(data[0], intermediaires), ...paiementsCommissions]);
+        setIsCommissionModalOpen(false);
+      } else {
+        alert('Erreur: ' + error?.message);
+      }
     }
   };
 
   const handleDeleteCommissionPayment = async (paymentId) => {
+    if (!window.confirm("Êtes-vous sûr de vouloir supprimer définitivement ce règlement de commission ?")) {
+      return;
+    }
     const { error } = await supabase.from('omra_paiements_commissions').delete().eq('id', paymentId);
     if (!error) {
       setPaiementsCommissions(paiementsCommissions.filter(p => p.id !== paymentId));
@@ -1251,8 +1759,10 @@ const OmraGroupDetails = () => {
 
   // --- Helpers ---
   const fmtDZD = (n) => Number(n).toLocaleString('fr-DZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  const getEnregistrementPaid = (enrId) => {
-    return paiements.filter(p => p.enregistrementId === enrId).reduce((sum, p) => sum + p.montantDZD, 0);
+  const getEnregistrementPaid = (enrId, excludePaymentIds = []) => {
+    return paiements
+      .filter(p => p.enregistrementId === enrId && !excludePaymentIds.includes(p.id))
+      .reduce((sum, p) => sum + (Number(p.montantDZD) || 0), 0);
   };
   const getEnregistrementName = (enrId) => {
     const enr = enregistrements.find(e => e.id === enrId);
@@ -1337,9 +1847,35 @@ const OmraGroupDetails = () => {
   });
 
   const isForeignCurrencyPayment = paymentFormData.devise !== 'DZD';
-  const computedDZD_Payment = isForeignCurrencyPayment 
-    ? (Number(paymentFormData.montantOriginal) || 0) * (Number(paymentFormData.tauxChange) || 0)
+  const currentEnrMembersForPayment = selectedEnrForPayment 
+    ? getEnregistrementMembersFinancials(selectedEnrForPayment, editingPaymentIds) 
+    : [];
+  const selectedPaymentMembers = currentEnrMembersForPayment.filter(m => paymentFormData.selectedMemberKeys?.includes(m.memberKey));
+  
+  const totalCustomOriginal = selectedPaymentMembers.reduce((sum, m) => sum + (Number(paymentFormData.customAmounts?.[m.memberKey]) || 0), 0);
+  const totalAmountOriginal = paymentFormData.splitMode === 'custom' 
+    ? totalCustomOriginal 
     : (Number(paymentFormData.montantOriginal) || 0);
+
+  const computedDZD_Payment = isForeignCurrencyPayment 
+    ? totalAmountOriginal * (Number(paymentFormData.tauxChange) || 0)
+    : totalAmountOriginal;
+
+  const equalSplitAmountPerMember = selectedPaymentMembers.length > 0 
+    ? (Number(paymentFormData.montantOriginal) || 0) / selectedPaymentMembers.length 
+    : (Number(paymentFormData.montantOriginal) || 0);
+
+  const equalSplitDZDPerMember = isForeignCurrencyPayment 
+    ? equalSplitAmountPerMember * (Number(paymentFormData.tauxChange) || 0)
+    : equalSplitAmountPerMember;
+
+  const hasExceededMemberInEqual = paymentFormData.splitMode === 'equal' && 
+    selectedPaymentMembers.some(m => equalSplitDZDPerMember > (m.reste + 0.01));
+
+  const totalResteSelectedDZD = selectedPaymentMembers.reduce((sum, m) => sum + (m.reste || 0), 0);
+  const totalResteSelectedDevise = isForeignCurrencyPayment && Number(paymentFormData.tauxChange) > 0 
+    ? Number((totalResteSelectedDZD / Number(paymentFormData.tauxChange)).toFixed(2))
+    : totalResteSelectedDZD;
 
   const handlePrintVueListe = () => {
     const currentHotelId = activeListHotelId || groupe?.hotels?.[0]?.hotelId;
@@ -1360,74 +1896,26 @@ const OmraGroupDetails = () => {
     let totalPaxCount = 0;
 
     const rows = hotelEnregistrements.map((enr) => {
-      let remainingPaymentToDistribute = getEnregistrementPaid(enr.id);
-      const enrHotelConfig = groupe?.hotels?.find(h => h.hotelId === enr.hotelId);
+      const financialMembers = getEnregistrementMembersFinancials(enr);
 
-      const tousPelerins = [
-        ...(enr.pelerins || []),
-        ...(enr.enfantsSansLit || []).map(enf => ({ ...enf, tarifPerso: enf.tarif, chd: true, isEnfantSansLit: true }))
-      ];
-
-      const passagersAdultes = tousPelerins.filter(p => !p.guide && !p.chd && !p.isEnfantSansLit);
-      const reductionPartagee = passagersAdultes.length > 0 ? Number(enr.reduction || 0) / passagersAdultes.length : 0;
-
-      return tousPelerins.map((pelerin, index) => {
+      return financialMembers.map((m, index) => {
         totalPaxCount++;
-        const isAdult = !pelerin.guide && !pelerin.chd && !pelerin.isEnfantSansLit;
-        const tarifLit = pelerin.guide 
-          ? 0 
-          : (pelerin.isEnfantSansLit 
-              ? Number(pelerin.tarifPerso) 
-              : (pelerin.tarifPerso ? Number(pelerin.tarifPerso) : (Number(enrHotelConfig?.[CHAMBRE_KEYS[enr.typeChambre]]) || 0)));
-        
-        let reduction = (pelerin.guide || !pelerin.chd || pelerin.isEnfantSansLit) ? 0 : (Number(enrHotelConfig?.reductionChd) || 0);
-        if (isAdult) reduction += reductionPartagee;
-        
-        let extraCosts = 0;
-        if (pelerin.restauration && !pelerin.guide && !pelerin.isEnfantSansLit) extraCosts += Number(enrHotelConfig?.restauration || 0);
-        
-        const commission = (pelerin.guide || pelerin.isEnfantSansLit) ? 0 : Number(enr.commissionCustom || 0);
-        
-        let totalDu = tarifLit - reduction + extraCosts;
-        if (enr.paiementRabatteur) {
-          totalDu -= commission;
-        }
-        totalDu = Math.max(0, totalDu);
-        
-        const totalPaye = Math.min(totalDu, remainingPaymentToDistribute);
-        remainingPaymentToDistribute -= totalPaye;
-        
-        const reste = totalDu - totalPaye;
-        
-        totalTarifLitSum += tarifLit;
-        totalRestoSum += extraCosts;
-        totalReductionSum += reduction;
-        totalCommissionSum += commission;
-        totalDuSum += totalDu;
-        totalPayeSum += totalPaye;
-        totalResteSum += reste;
-
-        let etatLabel = 'En attente';
-        let etatBg = '#ef4444';
-        if (reste === 0 && totalDu > 0) {
-          etatLabel = 'Payé';
-          etatBg = '#16a34a';
-        } else if (totalDu === 0 && reste === 0) {
-          etatLabel = 'Payé';
-          etatBg = '#16a34a';
-        } else if (totalPaye > 0) {
-          etatLabel = 'Versement';
-          etatBg = '#d97706';
-        }
+        totalTarifLitSum += m.tarifLit || 0;
+        totalRestoSum += m.extraCosts || 0;
+        totalReductionSum += m.reduction || 0;
+        totalCommissionSum += m.commission || 0;
+        totalDuSum += m.totalDu || 0;
+        totalPayeSum += m.totalPaye || 0;
+        totalResteSum += m.reste || 0;
 
         const tags = [];
-        if (pelerin.isEnfantSansLit) tags.push('<span class="tag tag-purple">Sans Lit</span>');
-        if (pelerin.chd && !pelerin.isEnfantSansLit) tags.push('<span class="tag tag-amber">CHD</span>');
-        if (pelerin.restauration) tags.push('<span class="tag tag-orange">Resto</span>');
-        if (pelerin.guide) tags.push('<span class="tag tag-blue">Guide</span>');
+        if (m.isEnfantSansLit) tags.push('<span class="tag tag-purple">Sans Lit</span>');
+        if (m.chd && !m.isEnfantSansLit) tags.push('<span class="tag tag-amber">CHD</span>');
+        if (m.restauration) tags.push('<span class="tag tag-orange">Resto</span>');
+        if (m.guide) tags.push('<span class="tag tag-blue">Guide</span>');
 
         const roomCell = index === 0 ? `
-          <td rowspan="${tousPelerins.length}" class="room-cell">
+          <td rowspan="${financialMembers.length}" class="room-cell">
             <div class="room-num">${enr.chambreId ? 'Chambre N°' + enr.chambreId : 'Non attribuée'}</div>
             <div class="room-type">${enr.typeChambre || '—'}</div>
           </td>
@@ -1437,19 +1925,19 @@ const OmraGroupDetails = () => {
           <tr>
             ${roomCell}
             <td>
-              <div class="pax-name">${pelerin.nom || '—'}</div>
+              <div class="pax-name">${m.nom || '—'}</div>
               ${tags.length > 0 ? `<div class="tags-row">${tags.join(' ')}</div>` : ''}
             </td>
-            <td style="text-align: center; font-weight: 600;">${pelerin.sexe || 'H'}</td>
-            <td style="text-align: right;">${fmtDZD(tarifLit)}</td>
-            <td style="text-align: right; color: #ea580c; font-weight: 500;">${extraCosts > 0 ? fmtDZD(extraCosts) : '0,00'}</td>
-            <td style="text-align: right; color: #d97706;">${reduction > 0 ? '-' + fmtDZD(reduction) : '0,00'}</td>
-            <td style="text-align: right; color: #6b7280;">${commission > 0 ? fmtDZD(commission) : '0,00'}</td>
-            <td style="text-align: right; font-weight: 700; color: #1d4ed8; background-color: #eff6ff;">${fmtDZD(totalDu)}</td>
-            <td style="text-align: right; font-weight: 700; color: #059669; background-color: #f0fdf4;">${fmtDZD(totalPaye)}</td>
-            <td style="text-align: right; font-weight: 700; color: #dc2626; background-color: #fef2f2;">${fmtDZD(reste)}</td>
+            <td style="text-align: center; font-weight: 600;">${m.sexe || 'H'}</td>
+            <td style="text-align: right;">${fmtDZD(m.tarifLit || 0)}</td>
+            <td style="text-align: right; color: #ea580c; font-weight: 500;">${(m.extraCosts || 0) > 0 ? fmtDZD(m.extraCosts) : '0,00'}</td>
+            <td style="text-align: right; color: #d97706;">${(m.reduction || 0) > 0 ? '-' + fmtDZD(m.reduction) : '0,00'}</td>
+            <td style="text-align: right; color: #6b7280;">${(m.commission || 0) > 0 ? fmtDZD(m.commission) : '0,00'}</td>
+            <td style="text-align: right; font-weight: 700; color: #1d4ed8; background-color: #eff6ff;">${fmtDZD(m.totalDu || 0)}</td>
+            <td style="text-align: right; font-weight: 700; color: #059669; background-color: #f0fdf4;">${fmtDZD(m.totalPaye || 0)}</td>
+            <td style="text-align: right; font-weight: 700; color: #dc2626; background-color: #fef2f2;">${fmtDZD(m.reste || 0)}</td>
             <td style="text-align: center;">
-              <span class="status-badge" style="background-color: ${etatBg};">${etatLabel}</span>
+              <span class="status-badge" style="background-color: ${m.etatBg};">${m.etatLabel}</span>
             </td>
           </tr>
         `;
@@ -2070,110 +2558,62 @@ const OmraGroupDetails = () => {
                       }
 
                       return hotelEnregistrements.map((enr, iEnr) => {
-                      let remainingPaymentToDistribute = getEnregistrementPaid(enr.id);
-                      const enrHotelConfig = groupe?.hotels?.find(h => h.hotelId === enr.hotelId);
-                      
-                      const tousPelerins = [
-                        ...(enr.pelerins || []),
-                        ...(enr.enfantsSansLit || []).map(enf => ({ ...enf, tarifPerso: enf.tarif, chd: true, isEnfantSansLit: true }))
-                      ];
-                      
-                      const passagersAdultes = tousPelerins.filter(p => !p.guide && !p.chd && !p.isEnfantSansLit);
-                      const reductionPartagee = passagersAdultes.length > 0 ? Number(enr.reduction || 0) / passagersAdultes.length : 0;
-                      
-                      return tousPelerins.map((pelerin, index) => {
-                        const isAdult = !pelerin.guide && !pelerin.chd && !pelerin.isEnfantSansLit;
-                        const tarifLit = pelerin.guide 
-                          ? 0 
-                          : (pelerin.isEnfantSansLit 
-                              ? Number(pelerin.tarifPerso) 
-                              : (pelerin.tarifPerso ? Number(pelerin.tarifPerso) : (Number(enrHotelConfig?.[CHAMBRE_KEYS[enr.typeChambre]]) || 0)));
-                        
-                        let reduction = (pelerin.guide || !pelerin.chd || pelerin.isEnfantSansLit) ? 0 : (Number(enrHotelConfig?.reductionChd) || 0);
-                        if (isAdult) reduction += reductionPartagee;
-                        
-                        let extraCosts = 0;
-                        if (pelerin.restauration && !pelerin.guide && !pelerin.isEnfantSansLit) extraCosts += Number(enrHotelConfig?.restauration || 0);
-                        
-                        const commission = (pelerin.guide || pelerin.isEnfantSansLit) ? 0 : Number(enr.commissionCustom || 0);
-                        
-                        let totalDu = tarifLit - reduction + extraCosts;
-                        if (enr.paiementRabatteur) {
-                          totalDu -= commission;
-                        }
-                        totalDu = Math.max(0, totalDu);
-                        
-                        const totalPaye = Math.min(totalDu, remainingPaymentToDistribute);
-                        remainingPaymentToDistribute -= totalPaye;
-                        
-                        const reste = totalDu - totalPaye;
-                        
-                        let etat = 'pending';
-                        let etatColor = 'bg-red-500 text-white';
-                        if (reste === 0 && totalDu > 0) {
-                          etat = 'payé';
-                          etatColor = 'bg-green-500 text-white';
-                        } else if (totalDu === 0 && reste === 0) {
-                          etat = 'payé';
-                          etatColor = 'bg-green-500 text-white';
-                        } else if (totalPaye > 0) {
-                          etat = 'versement';
-                          etatColor = 'bg-amber-500 text-white';
-                        }
+                        const financialMembers = getEnregistrementMembersFinancials(enr);
 
-                        return (
-                          <tr key={`${enr.id}-${index}`} className="hover:bg-gray-50 transition-colors">
-                            {index === 0 && (
-                              <td rowSpan={tousPelerins.length} className="px-4 py-3 border border-gray-200 font-bold align-middle text-center bg-gray-50">
-                                <div>{enr.chambreId ? `Chambre N°${enr.chambreId}` : 'Non attribuée'}</div>
-                                <div className="text-xs font-medium text-gray-500 mt-0.5">{enr.typeChambre}</div>
+                        return financialMembers.map((m, index) => {
+                          return (
+                            <tr key={`${enr.id}-${index}`} className="hover:bg-gray-50 transition-colors">
+                              {index === 0 && (
+                                <td rowSpan={financialMembers.length} className="px-4 py-3 border border-gray-200 font-bold align-middle text-center bg-gray-50">
+                                  <div>{enr.chambreId ? `Chambre N°${enr.chambreId}` : 'Non attribuée'}</div>
+                                  <div className="text-xs font-medium text-gray-500 mt-0.5">{enr.typeChambre}</div>
+                                </td>
+                              )}
+                              <td className="px-4 py-2 border border-gray-200 font-medium">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <span>{m.nom}</span>
+                                  {m.isEnfantSansLit && (
+                                    <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[9px] font-bold rounded uppercase">Sans Lit</span>
+                                  )}
+                                  {m.chd && !m.isEnfantSansLit && (
+                                    <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-bold rounded uppercase">CHD</span>
+                                  )}
+                                  {m.restauration && (
+                                    <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[9px] font-bold rounded uppercase">Resto</span>
+                                  )}
+                                  {m.guide && (
+                                    <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[9px] font-bold rounded uppercase">Guide</span>
+                                  )}
+                                </div>
                               </td>
-                            )}
-                            <td className="px-4 py-2 border border-gray-200 font-medium">
-                              <div className="flex items-center gap-2 flex-wrap">
-                                <span>{pelerin.nom}</span>
-                                {pelerin.isEnfantSansLit && (
-                                  <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[9px] font-bold rounded uppercase">Sans Lit</span>
-                                )}
-                                {pelerin.chd && !pelerin.isEnfantSansLit && (
-                                  <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-bold rounded uppercase">CHD</span>
-                                )}
-                                {pelerin.restauration && (
-                                  <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[9px] font-bold rounded uppercase">Resto</span>
-                                )}
-                                {pelerin.guide && (
-                                  <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[9px] font-bold rounded uppercase">Guide</span>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-4 py-2 border border-gray-200 text-center">{pelerin.sexe || 'H'}</td>
-                            <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(tarifLit)}</td>
-                            <td className="px-4 py-2 border border-gray-200 text-right text-orange-600 font-medium">{fmtDZD(extraCosts)}</td>
-                            <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(reduction)}</td>
-                            <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(commission)}</td>
-                            <td className="px-4 py-2 border border-gray-200 text-right font-bold text-blue-700 bg-blue-50/30">{fmtDZD(totalDu)}</td>
-                            <td className="px-4 py-2 border border-gray-200 text-right font-bold text-emerald-700 bg-emerald-50/30">{fmtDZD(totalPaye)}</td>
-                            <td className="px-4 py-2 border border-gray-200 text-right font-bold text-red-600 bg-red-50/30">{fmtDZD(reste)}</td>
-                            <td className={cn("px-4 py-2 border border-gray-200 text-center font-bold text-xs uppercase tracking-wider", etatColor)}>
-                              {etat}
-                            </td>
-                            {isAdmin && (
-                              <td className="px-3 py-2 border border-gray-200 text-center align-middle">
-                                <Button
-                                  variant="ghost"
-                                  size="icon-sm"
-                                  onClick={() => handleDeletePelerinFromGroup(enr.id, pelerin, pelerin.isEnfantSansLit)}
-                                  className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                  title="Supprimer ce pèlerin"
-                                >
-                                  <Trash2 size={13} />
-                                </Button>
+                              <td className="px-4 py-2 border border-gray-200 text-center">{m.sexe || 'H'}</td>
+                              <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(m.tarifLit || 0)}</td>
+                              <td className="px-4 py-2 border border-gray-200 text-right text-orange-600 font-medium">{fmtDZD(m.extraCosts || 0)}</td>
+                              <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(m.reduction || 0)}</td>
+                              <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(m.commission || 0)}</td>
+                              <td className="px-4 py-2 border border-gray-200 text-right font-bold text-blue-700 bg-blue-50/30">{fmtDZD(m.totalDu || 0)}</td>
+                              <td className="px-4 py-2 border border-gray-200 text-right font-bold text-emerald-700 bg-emerald-50/30">{fmtDZD(m.totalPaye || 0)}</td>
+                              <td className="px-4 py-2 border border-gray-200 text-right font-bold text-red-600 bg-red-50/30">{fmtDZD(m.reste || 0)}</td>
+                              <td className={cn("px-4 py-2 border border-gray-200 text-center font-bold text-xs uppercase tracking-wider", m.etatColor)}>
+                                {m.etat}
                               </td>
-                            )}
-                          </tr>
-                        );
+                              {isAdmin && (
+                                <td className="px-3 py-2 border border-gray-200 text-center align-middle">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon-sm"
+                                    onClick={() => handleDeletePelerinFromGroup(enr.id, m.rawPelerin || m, m.isEnfantSansLit)}
+                                    className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                    title="Supprimer ce pèlerin"
+                                  >
+                                    <Trash2 size={13} />
+                                  </Button>
+                                </td>
+                              )}
+                            </tr>
+                          );
+                        });
                       });
-                    });
                   })()}
                   </tbody>
                 </table>
@@ -2499,16 +2939,16 @@ const OmraGroupDetails = () => {
                 <thead className="bg-muted/50 text-muted-foreground text-[11px] uppercase tracking-wider font-bold">
                   <tr>
                     <th className="px-5 py-3.5">Date</th>
-                    <th className="px-5 py-3.5">Client / Pèlerin principal</th>
-                    <th className="px-5 py-3.5">N° Bon</th>
+                    <th className="px-5 py-3.5">N° Reçu / Bon</th>
+                    <th className="px-5 py-3.5">Dossier & Répartition</th>
                     <th className="px-5 py-3.5 text-right">Montant (Origine)</th>
                     <th className="px-5 py-3.5 text-right">Taux</th>
-                    <th className="px-5 py-3.5 text-right text-emerald-600">Montant DZD</th>
+                    <th className="px-5 py-3.5 text-right text-emerald-600">Montant Total DZD</th>
                     <th className="px-3 py-3.5 w-10"></th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
-                  {groupePaiements.length === 0 ? (
+                  {groupedPaiements.length === 0 ? (
                     <tr>
                       <td colSpan={7} className="px-5 py-16 text-center">
                         <div className="text-5xl mb-3 opacity-10">💳</div>
@@ -2516,38 +2956,72 @@ const OmraGroupDetails = () => {
                       </td>
                     </tr>
                   ) : (
-                    groupePaiements.map((p) => (
-                      <tr key={p.id} className="hover:bg-muted/20 transition-colors group/row">
+                    groupedPaiements.map((grp) => (
+                      <tr key={grp.groupKey} className="hover:bg-muted/20 transition-colors group/row">
                         <td className="px-5 py-4 whitespace-nowrap">
-                          <div className="flex items-center gap-2 text-muted-foreground">
+                          <div className="flex items-center gap-2 text-muted-foreground font-medium">
                             <Calendar size={14} />
-                            {new Date(p.datePaiement).toLocaleDateString('fr-FR')}
+                            {new Date(grp.datePaiement).toLocaleDateString('fr-FR')}
                           </div>
+                        </td>
+                        <td className="px-5 py-4 whitespace-nowrap">
+                          {grp.numBon ? (
+                            <span className="font-mono text-xs bg-muted/70 px-2.5 py-1 rounded-md border font-bold text-foreground">
+                              {grp.numBon}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground italic text-xs">Sans numéro</span>
+                          )}
                         </td>
                         <td className="px-5 py-4">
-                          <div className="font-semibold">{p.nomClient}</div>
-                          <div className="text-[10px] text-muted-foreground mt-0.5">
-                            Lié à : {getEnregistrementName(p.enregistrementId)}
+                          <div className="font-bold text-foreground text-sm">
+                            {getEnregistrementName(grp.enregistrementId)}
+                          </div>
+                          {/* Member breakdown tags */}
+                          <div className="flex items-center gap-1.5 flex-wrap mt-1.5">
+                            {grp.items.map((item, idx) => (
+                              <span 
+                                key={idx} 
+                                className="inline-flex items-center gap-1 text-[11px] bg-emerald-50 text-emerald-800 border border-emerald-200/70 px-2 py-0.5 rounded-md font-semibold"
+                              >
+                                <span>{item.nomClient}</span>
+                                <span className="font-bold text-emerald-700 font-mono">({fmtDZD(item.montantDZD)} DZD)</span>
+                              </span>
+                            ))}
                           </div>
                         </td>
-                        <td className="px-5 py-4 text-muted-foreground">
-                          {p.numBon || '—'}
-                        </td>
                         <td className="px-5 py-4 text-right">
-                          <span className="font-semibold">{p.montantOriginal.toLocaleString('fr-DZ')}</span>
-                          <span className="text-xs text-muted-foreground ml-1">{p.devise}</span>
+                          <span className="font-semibold">{grp.totalMontantOriginal.toLocaleString('fr-DZ')}</span>
+                          <span className="text-xs text-muted-foreground ml-1 font-bold">{grp.devise}</span>
                         </td>
-                        <td className="px-5 py-4 text-right text-muted-foreground">
-                          {p.tauxChange ? p.tauxChange.toLocaleString('fr-DZ') : '—'}
+                        <td className="px-5 py-4 text-right text-muted-foreground font-mono text-xs">
+                          {grp.tauxChange ? grp.tauxChange.toLocaleString('fr-DZ') : '—'}
                         </td>
-                        <td className="px-5 py-4 text-right font-bold text-emerald-600 text-base">
-                          {p.montantDZD.toLocaleString('fr-DZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        <td className="px-5 py-4 text-right font-black text-emerald-600 text-base">
+                          {grp.totalMontantDZD.toLocaleString('fr-DZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs font-bold">DZD</span>
                         </td>
-                        <td className="px-3 py-4">
+                        <td className="px-3 py-4 text-right">
                           {isAdmin && (
-                            <Button variant="ghost" size="icon-sm" className="opacity-0 group-hover/row:opacity-100 transition-opacity text-destructive hover:bg-destructive/10" onClick={() => handleDeletePayment(p.id)} title="Supprimer le paiement">
-                              <Trash2 size={14} />
-                            </Button>
+                            <div className="flex items-center justify-end gap-1 opacity-0 group-hover/row:opacity-100 transition-opacity">
+                              <Button 
+                                variant="ghost" 
+                                size="icon-sm" 
+                                className="h-8 w-8 text-blue-600 hover:text-blue-700 hover:bg-blue-50" 
+                                onClick={() => handleOpenEditPaymentGroup(grp)} 
+                                title="Modifier ce paiement / reçu"
+                              >
+                                <Pencil size={14} />
+                              </Button>
+                              <Button 
+                                variant="ghost" 
+                                size="icon-sm" 
+                                className="h-8 w-8 text-destructive hover:text-red-700 hover:bg-destructive/10" 
+                                onClick={() => handleDeletePaymentGroup(grp)} 
+                                title="Supprimer ce paiement / reçu"
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
                           )}
                         </td>
                       </tr>
@@ -2623,9 +3097,22 @@ const OmraGroupDetails = () => {
                                     <div className="flex items-center gap-4">
                                       <span className="font-bold text-emerald-600">{fmtDZD(p.montant)} DZD</span>
                                       {isAdmin && (
-                                        <button onClick={() => handleDeleteCommissionPayment(p.id)} className="text-red-400 hover:text-red-600" title="Supprimer ce paiement">
-                                          <Trash2 size={12} />
-                                        </button>
+                                        <div className="flex items-center gap-1">
+                                          <button 
+                                            onClick={() => handleOpenEditCommission(p)} 
+                                            className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded transition-colors" 
+                                            title="Modifier ce règlement"
+                                          >
+                                            <Pencil size={12} />
+                                          </button>
+                                          <button 
+                                            onClick={() => handleDeleteCommissionPayment(p.id)} 
+                                            className="text-red-400 hover:text-red-600 p-1 hover:bg-red-50 rounded transition-colors" 
+                                            title="Supprimer ce règlement"
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
+                                        </div>
                                       )}
                                     </div>
                                   </div>
@@ -3227,51 +3714,427 @@ const OmraGroupDetails = () => {
         </Dialog>
 
         {/* ── Modal Paiement ───────────────────────────────────── */}
-        <Dialog open={isPaymentModalOpen} onOpenChange={setIsPaymentModalOpen}>
-          <DialogContent className="max-w-xl p-0 overflow-hidden" onClose={() => setIsPaymentModalOpen(false)}>
-            <div className="bg-gradient-to-r from-emerald-100/50 via-emerald-50/30 to-transparent px-6 py-5 border-b">
-              <DialogHeader>
-                <DialogTitle className="text-2xl font-extrabold flex items-center gap-2">
-                  <div className="flex items-center justify-center w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600">
-                    <CreditCard size={18} />
-                  </div>
-                  Ajouter un paiement
-                </DialogTitle>
-                <DialogDescription>Saisissez les détails du paiement pour cet enregistrement</DialogDescription>
-              </DialogHeader>
+        <Dialog open={isPaymentModalOpen} onOpenChange={(open) => {
+          setIsPaymentModalOpen(open);
+          if (!open) setEditingPaymentId(null);
+        }}>
+          <DialogContent className="max-w-2xl max-h-[92vh] flex flex-col p-0 overflow-hidden" onClose={() => {
+            setIsPaymentModalOpen(false);
+            setEditingPaymentId(null);
+          }}>
+            <div className={cn(
+              "px-6 py-4 border-b shrink-0 flex items-center justify-between",
+              editingPaymentId 
+                ? "bg-gradient-to-r from-blue-100/70 via-blue-50/40 to-transparent" 
+                : "bg-gradient-to-r from-emerald-100/70 via-emerald-50/40 to-transparent"
+            )}>
+              <div className="flex items-center gap-3">
+                <div className={cn(
+                  "flex items-center justify-center w-10 h-10 rounded-xl font-bold shadow-sm",
+                  editingPaymentId ? "bg-blue-100 text-blue-700" : "bg-emerald-100 text-emerald-700"
+                )}>
+                  {editingPaymentId ? <Pencil size={20} /> : <CreditCard size={20} />}
+                </div>
+                <div>
+                  <DialogTitle className="text-xl font-extrabold text-foreground flex items-center gap-2">
+                    {editingPaymentId ? "Modifier le Paiement" : "Enregistrer un Paiement"}
+                    {editingPaymentId && (
+                      <Badge variant="outline" className="text-[10px] bg-blue-50 text-blue-700 border-blue-200">Admin</Badge>
+                    )}
+                  </DialogTitle>
+                  <DialogDescription className="text-xs text-muted-foreground">
+                    {editingPaymentId 
+                      ? "Modifiez le montant, la répartition ou les membres associés à ce versement"
+                      : "Saisissez les détails du versement et sélectionnez les membres concernés"}
+                  </DialogDescription>
+                </div>
+              </div>
             </div>
+
             <form onSubmit={handleSavePayment} className="flex flex-col min-h-0 flex-1">
-              <div className="p-6 space-y-6 overflow-y-auto flex-1">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  
-                  <div className="space-y-2.5 md:col-span-2">
-                    <Label className="text-sm font-bold text-foreground">Sélectionner le Client / Enregistrement <span className="text-red-500">*</span></Label>
-                    <Select 
-                      required
-                      value={currentEnregistrementId || ''}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        setCurrentEnregistrementId(val);
-                        const enr = groupeEnregistrements.find(x => x.id === val);
-                        if(enr) {
-                          setPaymentFormData({...paymentFormData, nomClient: enr.pelerins?.[0]?.nom || ''});
-                        }
-                      }}
-                      className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
-                    >
-                      <option value="">Sélectionnez un enregistrement...</option>
-                      {groupeEnregistrements.map(enr => (
+              <div className="p-6 space-y-5 overflow-y-auto flex-1 custom-scrollbar">
+                
+                {/* 1. Sélection Dossier / Enregistrement */}
+                <div className="space-y-1.5">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold uppercase tracking-wider text-foreground">
+                      Dossier / Enregistrement <span className="text-red-500">*</span>
+                    </Label>
+                    {selectedEnrForPayment && (
+                      <span className="text-xs font-semibold text-muted-foreground">
+                        Reste global : <span className="text-red-600 font-bold">{fmtDZD(Math.max(0, (selectedEnrForPayment.totalNet || 0) - getEnregistrementPaid(selectedEnrForPayment.id, editingPaymentIds)))} DZD</span>
+                      </span>
+                    )}
+                  </div>
+                  <Select 
+                    required
+                    value={currentEnregistrementId || ''}
+                    onChange={(e) => handleSelectEnregistrementForPayment(e.target.value)}
+                    className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors text-sm font-medium"
+                  >
+                    <option value="">Sélectionnez un enregistrement...</option>
+                    {groupeEnregistrements.map(enr => {
+                      const reste = Math.max(0, (enr.totalNet || 0) - getEnregistrementPaid(enr.id, enr.id === currentEnregistrementId ? editingPaymentIds : []));
+                      return (
                         <option key={enr.id} value={enr.id}>
-                          {enr.pelerins?.[0]?.nom || 'Client sans nom'} (Chambre: {getHotelName(enr.hotelId)} - {enr.typeChambre}) - Reste à payer: {fmtDZD(enr.totalNet - getEnregistrementPaid(enr.id))} DZD
+                          {enr.pelerins?.[0]?.nom || 'Client sans nom'} (Chambre: {getHotelName(enr.hotelId)} - {enr.typeChambre}) - Reste: {fmtDZD(reste)} DZD
                         </option>
-                      ))}
-                    </Select>
+                      );
+                    })}
+                  </Select>
+                </div>
+
+                {/* 2. Sélection des Membres & Mode de Répartition */}
+                {selectedEnrForPayment && currentEnrMembersForPayment.length > 0 && (
+                  <div className="rounded-xl border border-emerald-200/80 bg-emerald-50/20 p-4 space-y-3.5">
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex items-center gap-2">
+                        <Users size={16} className="text-emerald-700" />
+                        <span className="text-xs font-bold uppercase tracking-wider text-emerald-950">
+                          Membres concernés ({selectedPaymentMembers.length}/{currentEnrMembersForPayment.length} sélectionnés)
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          onClick={handleSelectAllPaymentMembers}
+                          className="text-[11px] font-semibold text-emerald-700 hover:text-emerald-900 underline"
+                        >
+                          Tout cocher
+                        </button>
+                        <span className="text-muted-foreground text-xs">&bull;</span>
+                        <button
+                          type="button"
+                          onClick={handleDeselectAllPaymentMembers}
+                          className="text-[11px] font-semibold text-muted-foreground hover:text-foreground underline"
+                        >
+                          Tout décocher
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Liste des Membres sous forme de cartes */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                      {currentEnrMembersForPayment.map((member) => {
+                        const isSelected = paymentFormData.selectedMemberKeys.includes(member.memberKey);
+                        const maxAllowed = getMemberMaxAllowed(member);
+                        const isOverLimit = paymentFormData.splitMode === 'custom' && 
+                          Number(paymentFormData.customAmounts?.[member.memberKey] || 0) > (maxAllowed + 0.001);
+                        const isOverInEqual = paymentFormData.splitMode === 'equal' && isSelected && 
+                          equalSplitDZDPerMember > (member.reste + 0.01);
+
+                        return (
+                          <div
+                            key={member.memberKey}
+                            onClick={() => handleTogglePaymentMember(member.memberKey)}
+                            className={cn(
+                              "cursor-pointer rounded-lg p-3 border transition-all flex flex-col justify-between gap-2 select-none",
+                              isOverLimit || isOverInEqual
+                                ? "bg-red-50/60 border-red-400 shadow-xs ring-1 ring-red-300"
+                                : isSelected 
+                                  ? "bg-white border-emerald-500 shadow-sm ring-1 ring-emerald-400/40" 
+                                  : "bg-muted/30 border-border/80 opacity-60 hover:opacity-100"
+                            )}
+                          >
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <div className={cn(
+                                  "w-7 h-7 rounded-lg flex items-center justify-center shrink-0 text-xs font-bold",
+                                  member.isEnfantSansLit 
+                                    ? "bg-amber-100 text-amber-800" 
+                                    : member.sexe === 'F' 
+                                      ? "bg-pink-100 text-pink-700" 
+                                      : "bg-blue-100 text-blue-700"
+                                )}>
+                                  {member.isEnfantSansLit ? <Baby size={14} /> : <User size={14} />}
+                                </div>
+                                <div className="min-w-0">
+                                  <p className="text-xs font-bold text-foreground truncate">{member.nom}</p>
+                                  <div className="flex items-center gap-1 flex-wrap mt-0.5">
+                                    {member.isEnfantSansLit && (
+                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-amber-100 text-amber-800 font-bold uppercase">Sans Lit</span>
+                                    )}
+                                    {member.chd && !member.isEnfantSansLit && (
+                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 font-bold uppercase">CHD</span>
+                                    )}
+                                    {member.restauration && (
+                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-orange-100 text-orange-800 font-bold uppercase">Resto</span>
+                                    )}
+                                    {member.guide && (
+                                      <span className="text-[9px] px-1.5 py-0.2 rounded bg-purple-100 text-purple-800 font-bold uppercase">Guide</span>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="shrink-0 flex items-center gap-1.5">
+                                <span className={cn(
+                                  "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase",
+                                  member.reste === 0 
+                                    ? "bg-green-100 text-green-800 border border-green-200" 
+                                    : member.totalPaye > 0 
+                                      ? "bg-amber-100 text-amber-800 border border-amber-200" 
+                                      : "bg-red-100 text-red-800 border border-red-200"
+                                )}>
+                                  {member.reste === 0 ? "Soldé" : member.totalPaye > 0 ? "Versement" : "En attente"}
+                                </span>
+                                <div className="text-emerald-600 mt-0.5">
+                                  {isSelected ? <CheckSquare size={18} /> : <Square size={18} className="text-muted-foreground" />}
+                                </div>
+                              </div>
+                            </div>
+
+                            <div className="grid grid-cols-3 gap-1 pt-1.5 border-t border-dashed border-gray-200 text-[10px]">
+                              <div>
+                                <span className="text-muted-foreground block text-[9px]">Dû:</span>
+                                <span className="font-semibold text-gray-700">{fmtDZD(member.totalDu)}</span>
+                              </div>
+                              <div>
+                                <span className="text-muted-foreground block text-[9px]">Payé:</span>
+                                <span className="font-semibold text-emerald-600">{fmtDZD(member.totalPaye)}</span>
+                              </div>
+                              <div className="text-right">
+                                <span className="text-muted-foreground block text-[9px]">Reste:</span>
+                                <span className={cn("font-bold", member.reste > 0 ? "text-red-600" : "text-green-600")}>
+                                  {fmtDZD(member.reste)} DZD
+                                </span>
+                              </div>
+                            </div>
+
+                            {/* Montant personnalisé direct si mode custom activé */}
+                            {paymentFormData.splitMode === 'custom' && isSelected && (
+                              <div className="pt-2 border-t mt-1" onClick={e => e.stopPropagation()}>
+                                <div className="flex items-center justify-between mb-1">
+                                  <Label className="text-[10px] font-bold text-muted-foreground">
+                                    Montant ({paymentFormData.devise}) :
+                                  </Label>
+                                  <span className="text-[10px] font-semibold text-emerald-700">
+                                    Max: {fmtDZD(maxAllowed)} {paymentFormData.devise}
+                                  </span>
+                                </div>
+                                <Input 
+                                  type="number"
+                                  min="0"
+                                  max={maxAllowed}
+                                  step="any"
+                                  placeholder={`0 (Max: ${maxAllowed})`}
+                                  value={paymentFormData.customAmounts?.[member.memberKey] ?? ''}
+                                  onChange={(e) => {
+                                    handleCustomAmountChange(member.memberKey, e.target.value);
+                                  }}
+                                  className={cn(
+                                    "h-8 text-xs bg-white font-bold",
+                                    isOverLimit ? "border-red-500 text-red-700 ring-1 ring-red-400" : "border-emerald-400"
+                                  )}
+                                />
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+
+                    {/* Choix du mode de split si plus d'un membre sélectionné */}
+                    {selectedPaymentMembers.length > 1 && (
+                      <div className="pt-2 border-t border-emerald-200/60 flex items-center justify-between flex-wrap gap-2">
+                        <span className="text-xs font-semibold text-emerald-950 flex items-center gap-1.5">
+                          <Split size={14} className="text-emerald-600" /> Mode de versement :
+                        </span>
+                        <div className="flex items-center gap-1 bg-white p-1 rounded-lg border border-emerald-300">
+                          <button
+                            type="button"
+                            onClick={() => setPaymentFormData(p => ({ ...p, splitMode: 'equal' }))}
+                            className={cn(
+                              "px-3 py-1 rounded text-xs font-bold transition-colors",
+                              paymentFormData.splitMode === 'equal'
+                                ? "bg-emerald-600 text-white shadow-xs"
+                                : "text-gray-600 hover:text-gray-900"
+                            )}
+                          >
+                            Répartition égale
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const initialCustomAmounts = { ...paymentFormData.customAmounts };
+                              selectedPaymentMembers.forEach(m => {
+                                const memberMax = getMemberMaxAllowed(m);
+                                if (!initialCustomAmounts[m.memberKey] || Number(initialCustomAmounts[m.memberKey]) <= 0) {
+                                  const splitAmt = equalSplitAmountPerMember > 0 ? equalSplitAmountPerMember : memberMax;
+                                  initialCustomAmounts[m.memberKey] = Math.min(splitAmt, memberMax).toString();
+                                } else if (Number(initialCustomAmounts[m.memberKey]) > memberMax) {
+                                  initialCustomAmounts[m.memberKey] = memberMax.toString();
+                                }
+                              });
+                              setPaymentFormData(p => ({ 
+                                ...p, 
+                                splitMode: 'custom',
+                                customAmounts: initialCustomAmounts 
+                              }));
+                            }}
+                            className={cn(
+                              "px-3 py-1 rounded text-xs font-bold transition-colors",
+                              paymentFormData.splitMode === 'custom'
+                                ? "bg-emerald-600 text-white shadow-xs"
+                                : "text-gray-600 hover:text-gray-900"
+                            )}
+                          >
+                            Montants personnalisés
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* 3. Détails du Montant & Devise */}
+                <div className="border-t pt-4 space-y-4">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-700">
+                      Montant & Devise
+                    </h3>
+                    {paymentFormData.splitMode === 'equal' && selectedPaymentMembers.length > 1 && (
+                      <span className={cn(
+                        "text-xs font-semibold px-2.5 py-0.5 rounded-full border",
+                        hasExceededMemberInEqual 
+                          ? "bg-amber-100 text-amber-900 border-amber-300"
+                          : "bg-emerald-50 text-emerald-700 border-emerald-200"
+                      )}>
+                        {fmtDZD(equalSplitAmountPerMember)} {paymentFormData.devise} / membre
+                      </span>
+                    )}
                   </div>
 
-                  <div className="space-y-2.5">
-                    <Label className="text-sm font-bold text-foreground">Nom sur le reçu (Client)</Label>
+                  {hasExceededMemberInEqual && (
+                    <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-start gap-2.5 shadow-xs">
+                      <AlertCircle size={17} className="text-amber-600 shrink-0 mt-0.5" />
+                      <div>
+                        <p className="font-bold">Attention : Répartition supérieure au reste</p>
+                        <p className="text-[11px] text-amber-800 mt-0.5">
+                          Le montant par membre ({fmtDZD(equalSplitDZDPerMember)} DZD) dépasse le reste à payer d'au moins un passager sélectionné. Veuillez réduire le montant ou basculer en mode <strong>Montants personnalisés</strong>.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                    {/* Montant Input (désactivé ou calculé si mode custom) */}
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <Label className="text-xs font-bold text-foreground">
+                          {paymentFormData.splitMode === 'custom' ? 'Total Montant (Calculé)' : 'Montant Total'} <span className="text-red-500">*</span>
+                        </Label>
+                        {paymentFormData.splitMode === 'equal' && totalResteSelectedDevise > 0 && (
+                          <button
+                            type="button"
+                            onClick={() => setPaymentFormData(prev => ({ ...prev, montantOriginal: totalResteSelectedDevise.toString() }))}
+                            className="text-[10px] font-semibold text-emerald-700 hover:text-emerald-900 underline"
+                          >
+                            Solde ({fmtDZD(totalResteSelectedDevise)} {paymentFormData.devise})
+                          </button>
+                        )}
+                      </div>
+                      {paymentFormData.splitMode === 'custom' ? (
+                        <div className="h-11 px-3 bg-muted/40 border rounded-md flex items-center font-bold text-foreground text-sm">
+                          {fmtDZD(totalCustomOriginal)} {paymentFormData.devise}
+                        </div>
+                      ) : (
+                        <Input 
+                          type="number" 
+                          required 
+                          min="0" 
+                          step="any" 
+                          placeholder="0.00"
+                          value={paymentFormData.montantOriginal}
+                          onChange={e => setPaymentFormData({...paymentFormData, montantOriginal: e.target.value})}
+                          className={cn(
+                            "h-11 bg-muted/20 focus-visible:bg-transparent transition-colors font-bold text-sm",
+                            hasExceededMemberInEqual && "border-amber-500 focus-visible:ring-amber-300"
+                          )}
+                        />
+                      )}
+                    </div>
+
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold text-foreground">Devise <span className="text-red-500">*</span></Label>
+                      <Select 
+                        value={paymentFormData.devise}
+                        onChange={e => setPaymentFormData({...paymentFormData, devise: e.target.value})}
+                        className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors font-semibold"
+                      >
+                        {DEVISES.map(d => <option key={d} value={d}>{d}</option>)}
+                      </Select>
+                    </div>
+
+                    {isForeignCurrencyPayment ? (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-bold text-foreground">Taux de change (DZD) <span className="text-red-500">*</span></Label>
+                        <Input 
+                          type="number" 
+                          required 
+                          min="0.0001" 
+                          step="any" 
+                          placeholder="Ex: 145"
+                          value={paymentFormData.tauxChange}
+                          onChange={e => setPaymentFormData({...paymentFormData, tauxChange: e.target.value})}
+                          className={`h-11 bg-muted/20 focus-visible:bg-transparent transition-colors ${isForeignCurrencyPayment && (!paymentFormData.tauxChange || Number(paymentFormData.tauxChange) <= 0) ? 'border-red-500 ring-2 ring-red-200' : ''}`}
+                        />
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-bold text-foreground">Date du paiement <span className="text-red-500">*</span></Label>
+                        <Input 
+                          type="date" 
+                          required 
+                          value={paymentFormData.datePaiement}
+                          onChange={e => setPaymentFormData({...paymentFormData, datePaiement: e.target.value})}
+                          className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
+                        />
+                      </div>
+                    )}
+                  </div>
+
+                  {isForeignCurrencyPayment && (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-bold text-foreground">Date du paiement <span className="text-red-500">*</span></Label>
+                        <Input 
+                          type="date" 
+                          required 
+                          value={paymentFormData.datePaiement}
+                          onChange={e => setPaymentFormData({...paymentFormData, datePaiement: e.target.value})}
+                          className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
+                        />
+                      </div>
+                      <div className="space-y-1.5">
+                        <Label className="text-xs font-bold text-foreground">N° de Bon (Facultatif)</Label>
+                        <Input 
+                          placeholder="Ex: BON-12345"
+                          value={paymentFormData.numBon}
+                          onChange={e => setPaymentFormData({...paymentFormData, numBon: e.target.value})}
+                          className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {!isForeignCurrencyPayment && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold text-foreground">N° de Bon (Facultatif)</Label>
+                      <Input 
+                        placeholder="Ex: BON-12345"
+                        value={paymentFormData.numBon}
+                        onChange={e => setPaymentFormData({...paymentFormData, numBon: e.target.value})}
+                        className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                {/* 4. Nom sur le Reçu & Commission */}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t pt-4">
+                  <div className="space-y-1.5">
+                    <Label className="text-xs font-bold text-foreground">Nom sur le reçu / Client</Label>
                     <Input 
-                      required 
                       placeholder="Nom et Prénom"
                       value={paymentFormData.nomClient}
                       onChange={e => setPaymentFormData({...paymentFormData, nomClient: e.target.value})}
@@ -3280,104 +4143,97 @@ const OmraGroupDetails = () => {
                   </div>
 
                   {selectedEnrForPayment?.intermediaire && (
-                    <div className="space-y-2.5 md:col-span-2">
-                      <Label className="text-sm font-bold text-foreground">Source du Paiement (Commission)</Label>
+                    <div className="space-y-1.5">
+                      <Label className="text-xs font-bold text-foreground">Source Commission ({selectedEnrForPayment.intermediaire})</Label>
                       {!hasPreviousPayments ? (
                         <Select 
                           value={paymentFormData.paiementRabatteur ? "rabatteur" : "client"} 
                           onChange={e => setPaymentFormData({...paymentFormData, paiementRabatteur: e.target.value === "rabatteur"})}
+                          className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors text-xs font-medium"
                         >
-                          <option value="client">Client (Plein tarif : l'agence devra la commission)</option>
-                          <option value="rabatteur">Rabatteur (Net de commission : {selectedEnrForPayment.totalCommission} DZD retenus à la source)</option>
+                          <option value="client">Client (Plein tarif)</option>
+                          <option value="rabatteur">Rabatteur (-{selectedEnrForPayment.totalCommission} DZD retenus)</option>
                         </Select>
                       ) : (
-                        <div className="p-3 bg-muted/30 border rounded-md text-sm text-muted-foreground flex items-center gap-2">
-                          <Tag size={14} className="text-primary"/> 
-                          Le mode de paiement a été fixé lors du 1er versement : 
-                          <span className="font-bold text-foreground">
-                            {selectedEnrForPayment.paiementRabatteur ? "Rabatteur" : "Client"}
-                          </span>
+                        <div className="h-11 px-3 bg-muted/30 border rounded-md text-xs text-muted-foreground flex items-center gap-1.5">
+                          <Tag size={13} className="text-primary"/> 
+                          Fixé : <span className="font-bold text-foreground">{selectedEnrForPayment.paiementRabatteur ? "Rabatteur" : "Client"}</span>
                         </div>
                       )}
                     </div>
                   )}
-
-                  <div className="space-y-2.5">
-                    <Label className="text-sm font-bold text-foreground">Date du paiement <span className="text-red-500">*</span></Label>
-                    <Input 
-                      type="date" 
-                      required 
-                      value={paymentFormData.datePaiement}
-                      onChange={e => setPaymentFormData({...paymentFormData, datePaiement: e.target.value})}
-                      className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
-                    />
-                  </div>
-                  <div className="space-y-2.5 md:col-span-2">
-                    <Label className="text-sm font-bold text-foreground">N° de Bon (Facultatif)</Label>
-                    <Input 
-                      placeholder="Ex: BON-12345"
-                      value={paymentFormData.numBon}
-                      onChange={e => setPaymentFormData({...paymentFormData, numBon: e.target.value})}
-                      className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
-                    />
-                  </div>
                 </div>
 
-                <div className="border-t pt-6">
-                  <h3 className="text-sm font-bold uppercase tracking-wider text-emerald-600 mb-4">Détails du montant</h3>
-                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                    <div className="space-y-2.5">
-                      <Label className="text-sm font-bold text-foreground">Montant <span className="text-red-500">*</span></Label>
-                      <Input 
-                        type="number" 
-                        required min="0" step="any" placeholder="0.00"
-                        value={paymentFormData.montantOriginal}
-                        onChange={e => setPaymentFormData({...paymentFormData, montantOriginal: e.target.value})}
-                        className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
-                      />
+                {/* 5. Récapitulatif Net en DZD */}
+                <div className="bg-emerald-50/80 border border-emerald-200 rounded-xl p-4 flex flex-col gap-2 shadow-xs">
+                  <div className="flex items-center justify-between">
+                    <div className="text-xs text-emerald-900 flex items-center gap-2 font-bold uppercase tracking-wider">
+                      <ArrowRightLeft size={16} className="text-emerald-700" /> Montant total converti en DZD :
                     </div>
-                    <div className="space-y-2.5">
-                      <Label className="text-sm font-bold text-foreground">Devise <span className="text-red-500">*</span></Label>
-                      <Select 
-                        value={paymentFormData.devise}
-                        onChange={e => setPaymentFormData({...paymentFormData, devise: e.target.value})}
-                        className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
-                      >
-                        {DEVISES.map(d => <option key={d} value={d}>{d}</option>)}
-                      </Select>
+                    <div className="text-xl font-black text-emerald-700">
+                      {computedDZD_Payment.toLocaleString('fr-DZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-xs font-bold">DZD</span>
                     </div>
-                    {isForeignCurrencyPayment && (
-                      <div className="space-y-2.5">
-                        <Label className="text-sm font-bold text-foreground">Taux <span className="text-red-500">*</span></Label>
-                        <Input 
-                          type="number" required min="0.0001" step="any" placeholder="Ex: 145"
-                          value={paymentFormData.tauxChange}
-                          onChange={e => setPaymentFormData({...paymentFormData, tauxChange: e.target.value})}
-                          className={`h-11 bg-muted/20 focus-visible:bg-transparent transition-colors ${isForeignCurrencyPayment && (!paymentFormData.tauxChange || Number(paymentFormData.tauxChange) <= 0) ? 'border-red-500 ring-2 ring-red-200' : ''}`}
-                        />
-                      </div>
-                    )}
                   </div>
 
-                  {isForeignCurrencyPayment && (!paymentFormData.tauxChange || Number(paymentFormData.tauxChange) <= 0) && (
-                    <div className="mt-4 bg-red-50 border border-red-200 text-red-700 rounded-lg p-3 text-xs font-bold flex items-center gap-2">
-                      ⚠️ Veuillez saisir un taux de change valide pour convertir le paiement en DZD.
+                  {selectedPaymentMembers.length > 1 && (
+                    <div className="pt-2 border-t border-emerald-200/60 text-xs text-emerald-900">
+                      <p className="font-semibold mb-1">Détail des {selectedPaymentMembers.length} paiements qui seront créés :</p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                        {selectedPaymentMembers.map(m => {
+                          const mOrig = paymentFormData.splitMode === 'custom' 
+                            ? (Number(paymentFormData.customAmounts?.[m.memberKey]) || 0)
+                            : equalSplitAmountPerMember;
+                          const mDZD = isForeignCurrencyPayment 
+                            ? mOrig * (Number(paymentFormData.tauxChange) || 0) 
+                            : mOrig;
+                          return (
+                            <div key={m.memberKey} className="flex items-center justify-between bg-white/80 px-2.5 py-1 rounded border border-emerald-200/50 text-[11px]">
+                              <span className="truncate font-medium">{m.nom}</span>
+                              <span className="font-bold text-emerald-800 shrink-0 ml-2">{fmtDZD(mDZD)} DZD</span>
+                            </div>
+                          );
+                        })}
+                      </div>
                     </div>
                   )}
-
-                  <div className="mt-6 bg-emerald-50 border border-emerald-100 rounded-lg p-4 flex items-center justify-between">
-                    <div className="text-sm text-emerald-800 flex items-center gap-2 font-medium">
-                      <ArrowRightLeft size={16} /> Net en DZD :
-                    </div>
-                    <div className="text-xl font-extrabold text-emerald-600">
-                      {computedDZD_Payment.toLocaleString('fr-DZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} <span className="text-sm">DZD</span>
-                    </div>
-                  </div>
                 </div>
+
               </div>
-              <div className="px-6 py-4 border-t bg-muted/30 flex justify-end gap-3 shrink-0 rounded-b-xl">
-                <Button type="button" variant="outline" onClick={() => setIsPaymentModalOpen(false)} className="h-11 px-6">Annuler</Button>
-                <Button type="submit" className="bg-emerald-600 hover:bg-emerald-700 text-white h-11 px-8">Confirmer le paiement</Button>
+
+              {/* Actions Footer */}
+              <div className="px-6 py-4 border-t bg-muted/20 flex items-center justify-between gap-3 shrink-0 rounded-b-xl">
+                <div className="text-xs text-muted-foreground hidden sm:block">
+                  {selectedPaymentMembers.length > 0 ? (
+                    <span><span className="font-bold text-foreground">{selectedPaymentMembers.length}</span> membre(s) sélectionné(s)</span>
+                  ) : <span>Aucun membre sélectionné</span>}
+                </div>
+                <div className="flex items-center gap-3">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => {
+                      setIsPaymentModalOpen(false);
+                      setEditingPaymentId(null);
+                    }} 
+                    className="h-11 px-6 font-semibold"
+                  >
+                    Annuler
+                  </Button>
+                  <Button 
+                    type="submit" 
+                    disabled={
+                      (selectedPaymentMembers.length === 0 && currentEnrMembersForPayment.length > 0) ||
+                      hasExceededMemberInEqual
+                    } 
+                    className={cn(
+                      "text-white h-11 px-8 font-bold shadow-md gap-2",
+                      editingPaymentId ? "bg-blue-600 hover:bg-blue-700" : "bg-emerald-600 hover:bg-emerald-700"
+                    )}
+                  >
+                    {editingPaymentId ? <Check size={16} /> : <CheckCircle2 size={16} />}
+                    {editingPaymentId ? "Enregistrer les modifications" : "Valider le paiement"}
+                  </Button>
+                </div>
               </div>
             </form>
           </DialogContent>

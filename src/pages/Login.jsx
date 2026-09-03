@@ -34,10 +34,10 @@ const Login = () => {
     <div className="min-h-screen bg-muted/20 flex flex-col justify-center items-center p-4">
       <div className="w-full max-w-md bg-card rounded-2xl shadow-xl border overflow-hidden">
         <div className="bg-gradient-to-r from-primary/10 via-primary/5 to-transparent px-8 py-10 text-center border-b">
-          <div className="mx-auto w-16 h-16 bg-primary/10 rounded-2xl flex items-center justify-center mb-4">
-            <Plane className="text-primary" size={32} />
+          <div className="mx-auto w-20 h-20 bg-background/80 rounded-2xl flex items-center justify-center p-2 mb-4 border border-border shadow-xs">
+            <img src="/logo.png" alt="EL MOKHTAR TRAVEL CRM" className="w-full h-full object-contain" />
           </div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">CRM Agence</h1>
+          <h1 className="text-2xl font-black tracking-tight text-foreground">EL MOKHTAR TRAVEL CRM</h1>
           <p className="text-sm text-muted-foreground mt-2">Connectez-vous pour accéder à votre espace de gestion</p>
         </div>
 
@@ -87,7 +87,7 @@ const Login = () => {
         </div>
       </div>
       <p className="text-xs text-muted-foreground mt-8 font-medium tracking-wider uppercase">
-        © {new Date().getFullYear()} Antigravity CRM
+        © {new Date().getFullYear()} EL MOKHTAR TRAVEL CRM
       </p>
     </div>
   );

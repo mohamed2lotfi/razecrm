@@ -5,7 +5,8 @@ import {
   XCircle, Calculator, Calendar, User, MapPin, Flame, Clock, 
   ArrowUpRight, Sparkles, Filter, ArrowUpDown, Search, X, UserCheck, Check,
   TrendingUp, Send, CheckCircle2, ShieldAlert, ChevronRight, Eye, Briefcase,
-  MessageCircle, Copy, PhoneCall, Zap, Edit3, ArrowRightLeft, ExternalLink, ShieldCheck, FileText
+  MessageCircle, Copy, PhoneCall, Zap, Edit3, ArrowRightLeft, ExternalLink, ShieldCheck, FileText,
+  ChevronLeft, ChevronsLeft, ChevronsRight
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '@/components/Layout';
@@ -111,6 +112,10 @@ const Pipeline = () => {
   const [loading, setLoading] = useState(true);
   const [viewMode, setViewMode] = useState('kanban'); // 'kanban' | 'list'
   
+  // Pagination States
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
+
   // Filter & Sort States
   const [filterDate, setFilterDate] = useState('all'); // 'all' | 'today' | 'week' | 'month'
   const [filterPriority, setFilterPriority] = useState('all'); // 'all' | 'Urgente' | 'Haute' | 'Moyenne' | 'Basse'
@@ -290,6 +295,18 @@ const Pipeline = () => {
     });
   }, [pipelineData, searchTerm, filterMyQuotes, filterPriority, filterDestination, filterDate, sortBy, user, profile]);
 
+  // Reset to page 1 whenever filters or search terms change
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, filterMyQuotes, filterPriority, filterDestination, filterDate, sortBy]);
+
+  const totalPages = Math.ceil(filteredAndSortedPipeline.length / itemsPerPage) || 1;
+
+  const paginatedPipeline = useMemo(() => {
+    const start = (currentPage - 1) * itemsPerPage;
+    return filteredAndSortedPipeline.slice(start, start + itemsPerPage);
+  }, [filteredAndSortedPipeline, currentPage, itemsPerPage]);
+
   useEffect(() => {
     setColumnsState({
       nouvelle: filteredAndSortedPipeline.filter(t => t.status === 'nouvelle'),
@@ -388,8 +405,9 @@ const Pipeline = () => {
         .eq('id', id)
         .select('*, clients(*)');
       
-      if (!error && data) {
-        setPipelineData(prev => prev.map(p => p.id === id ? data[0] : p));
+      if (!error && data && data[0]) {
+        const updatedItem = data[0];
+        setPipelineData(prev => prev.map(p => p.id === id ? updatedItem : p));
         showToast("Devis mis à jour avec succès !");
       } else if (error) {
         alert("Erreur lors de la mise à jour: " + error.message);
@@ -400,8 +418,9 @@ const Pipeline = () => {
         .insert([cleanPayload])
         .select('*, clients(*)');
       
-      if (!error && data) {
-        setPipelineData(prev => [data[0], ...prev]);
+      if (!error && data && data[0]) {
+        const createdItem = data[0];
+        setPipelineData(prev => [createdItem, ...prev]);
         showToast("Nouveau devis créé avec succès !");
       } else if (error) {
         alert("Erreur lors de la création: " + error.message);
@@ -502,6 +521,25 @@ const Pipeline = () => {
     setPipelineData(prev => prev.map(p => p.id === task.id ? { ...p, details_devis: updatedDetails } : p));
     await supabase.from('pipeline').update({ details_devis: updatedDetails }).eq('id', task.id);
     showToast(`Priorité : ${newPriority}`);
+  };
+
+  const handleQuickAgentChange = async (task, agent) => {
+    setContextMenu(null);
+    let detailsObj = {};
+    try {
+      if (task.details_devis && task.details_devis.trim().startsWith('{')) {
+        detailsObj = JSON.parse(task.details_devis);
+      }
+    } catch {}
+
+    const prevAgentId = detailsObj.agent_id;
+    detailsObj.agent_id = agent ? agent.id : null;
+    detailsObj.agent_nom = agent ? agent.nom : '';
+    const updatedDetails = JSON.stringify(detailsObj);
+
+    setPipelineData(prev => prev.map(p => p.id === task.id ? { ...p, details_devis: updatedDetails } : p));
+    await supabase.from('pipeline').update({ details_devis: updatedDetails }).eq('id', task.id);
+    showToast(agent ? `Assigné à ${agent.nom}` : `Attribution retirée`);
   };
 
   const handleCopyText = (text, message = 'Copié dans le presse-papier !') => {
@@ -1042,7 +1080,7 @@ const Pipeline = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-border/50 font-medium">
-                {filteredAndSortedPipeline.map(task => {
+                {paginatedPipeline.map(task => {
                   const meta = getQuoteMeta(task);
                   const prio = getPriorityBadge(meta.priorite);
                   const clientName = task.clients?.nom || task.nom_prospect || 'Client inconnu';
@@ -1139,6 +1177,77 @@ const Pipeline = () => {
               </tbody>
             </table>
           </div>
+
+          {/* ── Table Pagination for Devis ────────────────────────── */}
+          {filteredAndSortedPipeline.length > 0 && (
+            <div className="p-4 border-t border-border/80 bg-muted/20 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-muted-foreground">
+              <div className="flex items-center gap-3 flex-wrap">
+                <span>
+                  Affichage de <b className="text-foreground">{(currentPage - 1) * itemsPerPage + 1}</b> à <b className="text-foreground">{Math.min(currentPage * itemsPerPage, filteredAndSortedPipeline.length)}</b> sur <b className="text-foreground">{filteredAndSortedPipeline.length}</b> devis
+                </span>
+                <div className="flex items-center gap-1.5 border-l border-border/60 pl-3">
+                  <span className="text-[11px] font-semibold">Par page :</span>
+                  <Select
+                    value={String(itemsPerPage)}
+                    onChange={(e) => {
+                      setItemsPerPage(Number(e.target.value));
+                      setCurrentPage(1);
+                    }}
+                    className="h-7 w-20 text-xs bg-background rounded-lg font-bold"
+                  >
+                    <option value="10">10</option>
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                  </Select>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-1">
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(1)}
+                  className="h-8 w-8 p-0 rounded-xl"
+                  title="Première page"
+                >
+                  <ChevronsLeft size={14} />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="h-8 px-2.5 text-xs font-bold rounded-xl"
+                >
+                  <ChevronLeft size={14} className="mr-1" /> Précédent
+                </Button>
+                <div className="px-3 py-1 bg-background rounded-xl border border-border/60 font-black text-foreground">
+                  Page {currentPage} / {totalPages}
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  className="h-8 px-2.5 text-xs font-bold rounded-xl"
+                >
+                  Suivant <ChevronRight size={14} className="ml-1" />
+                </Button>
+                <Button 
+                  variant="outline" 
+                  size="sm" 
+                  disabled={currentPage >= totalPages}
+                  onClick={() => setCurrentPage(totalPages)}
+                  className="h-8 w-8 p-0 rounded-xl"
+                  title="Dernière page"
+                >
+                  <ChevronsRight size={14} />
+                </Button>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1223,6 +1332,42 @@ const Pipeline = () => {
                 </button>
               )}
             </div>
+
+            {/* Quick Agent Assignment Sub-Section */}
+            {agentsList && agentsList.length > 0 && (
+              <div className="pt-1.5 border-t border-slate-800/80 px-2 space-y-1">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                  Assigner à un Agent
+                </span>
+                <div className="flex flex-col gap-1 max-h-28 overflow-y-auto custom-scrollbar">
+                  {agentsList.map(ag => (
+                    <button
+                      key={ag.id}
+                      type="button"
+                      onClick={() => handleQuickAgentChange(task, ag)}
+                      className={cn(
+                        "px-2 py-1 rounded-lg text-[10px] font-bold text-left transition-colors border flex items-center justify-between",
+                        meta.agent_id === ag.id
+                          ? "bg-primary/20 text-primary-foreground border-primary/40"
+                          : "bg-slate-800/60 hover:bg-slate-800 text-slate-300 border-slate-700/50"
+                      )}
+                    >
+                      <span className="truncate">{ag.nom || ag.email}</span>
+                      {meta.agent_id === ag.id && <Check size={11} className="text-primary shrink-0" />}
+                    </button>
+                  ))}
+                  {meta.agent_id && (
+                    <button
+                      type="button"
+                      onClick={() => handleQuickAgentChange(task, null)}
+                      className="px-2 py-1 rounded-lg text-[10px] font-medium text-slate-400 hover:text-rose-300 hover:bg-rose-950/40 border border-slate-800 text-left"
+                    >
+                      Désassigner
+                    </button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* Quick Priority Sub-Section */}
             <div className="pt-1.5 border-t border-slate-800/80 px-2 space-y-1">
@@ -1328,13 +1473,101 @@ const Pipeline = () => {
           <VenteForm 
             onClose={() => setPendingVenteClient(null)} 
             initialData={{ client_id: c?.id, client_nom: c?.nom }} 
-            onSave={async (venteData) => {
-              const { error } = await supabase.from('ventes').insert([venteData]);
-              if (!error) {
+            onSave={async (rawData) => {
+              const { _visaMeta: visaMeta, id: _id, vente_articles: rawVenteArticles, articles: rawArticles, passagers: _passagers, ...newVenteData } = rawData;
+              const articleList = rawVenteArticles || rawArticles || [];
+              const effectivePaxList = _passagers || visaMeta?.passagers || [];
+
+              const cleanedPayload = {
+                ...newVenteData,
+                client_id: newVenteData.client_id || null,
+                service_id: newVenteData.service_id || null,
+                fournisseur_id: newVenteData.fournisseur_id || null,
+              };
+
+              let { data, error } = await supabase.from('ventes').insert([cleanedPayload]).select();
+
+              if (error) {
+                console.error("Insert error:", error);
+                alert("Erreur lors de la création de la vente : " + error.message);
+              } else if (data && data[0]) {
+                const insertedVente = data[0];
+
+                // Sync rows in vente_articles
+                if (articleList && Array.isArray(articleList) && articleList.length > 0) {
+                  try {
+                    const articlesToInsert = articleList.map((art, idx) => {
+                      const pa = parseFloat(art.prix_achat) || 0;
+                      const comm = parseFloat(art.commission) || 0;
+                      const pv = parseFloat(art.prix_vente) || (pa + comm);
+                      const paxForArt = (art.passagers && Array.isArray(art.passagers) && art.passagers.length > 0)
+                        ? art.passagers
+                        : effectivePaxList;
+                      
+                      return {
+                        vente_id: insertedVente.id,
+                        service_id: art.service_id || insertedVente.service_id || null,
+                        fournisseur_id: art.fournisseur_id || insertedVente.fournisseur_id || null,
+                        designation: art.designation || 'Prestation',
+                        prix_achat: pa,
+                        commission: comm,
+                        prix_vente: pv,
+                        quantite: parseFloat(art.quantite) || (paxForArt.length > 0 ? paxForArt.length : 1),
+                        destination: art.destination || insertedVente.destination || null,
+                        visa_country_id: art.visa_country_id || null,
+                        visa_type_id: art.visa_type_id || null,
+                        visa_dossier: Array.isArray(art.visa_dossier) ? art.visa_dossier : [],
+                        airline_id: art.airline_id || null,
+                        compagnie_nom: art.compagnie_nom || null,
+                        numero_billet: art.numero_billet || null,
+                        pnr: art.pnr || null,
+                        itineraire: art.itineraire || null,
+                        details_specifiques: {
+                          ...(art.details_specifiques || {}),
+                          passagers: paxForArt
+                        },
+                        notes: art.notes || null,
+                        ordre: idx + 1
+                      };
+                    });
+
+                    await supabase.from('vente_articles').insert(articlesToInsert);
+                  } catch (artErr) {
+                    console.warn("Erreur insertion vente_articles:", artErr);
+                  }
+                }
+
+                // If this is a visa sale, create visa_demandes for each passager
+                if (visaMeta && visaMeta.passagers && visaMeta.passagers.length > 0 && visaMeta.visa_type_id) {
+                  for (const passager of visaMeta.passagers) {
+                    const { data: demandeData } = await supabase.from('visa_demandes').insert([{
+                      vente_id: insertedVente.id,
+                      client_id: insertedVente.client_id,
+                      visa_type_id: visaMeta.visa_type_id,
+                      country_id: visaMeta.country_id,
+                      passager_nom: passager.nom,
+                      tarif_base: visaMeta.tarif_base_unit,
+                      tarif_vente: passager.tarif_vente || visaMeta.tarif_vente_unit,
+                      statut: 'Nouveau'
+                    }]).select();
+
+                    // Create dossier tracking entries for each document
+                    if (demandeData && demandeData[0] && visaMeta.dossier && visaMeta.dossier.length > 0) {
+                      const now = new Date().toISOString();
+                      const dossierEntries = visaMeta.dossier.map(docName => ({
+                        demande_id: demandeData[0].id,
+                        document_nom: docName,
+                        recu: false,
+                        date_reception: null
+                      }));
+                      await supabase.from('visa_dossier_tracking').insert(dossierEntries);
+                    }
+                  }
+                }
+
                 setPendingVenteClient(null);
                 showToast("Vente créée avec succès !");
-              } else {
-                alert("Erreur lors de la création de la vente : " + error.message);
+                fetchData();
               }
             }}
           />

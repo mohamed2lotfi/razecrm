@@ -3,7 +3,7 @@ import {
   X, FolderOpen, User, Phone, Mail, MapPin, Calendar, 
   CreditCard, DollarSign, Clock, FileText, CheckCircle2, 
   AlertCircle, ChevronRight, MessageSquare, Plus, ExternalLink,
-  Users, Building2, Plane, Sparkles, Loader2, ArrowUpRight
+  Users, Building2, Plane, Sparkles, Loader2, ArrowUpRight, Coins
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -12,6 +12,7 @@ import { supabase } from '@/lib/supabase';
 import { cn } from '@/lib/utils';
 import ClientRemarquesModal from '@/components/ClientRemarquesModal';
 import ProspectModal from '@/components/ProspectModal';
+import VentePaiementsModal from '@/components/VentePaiementsModal';
 import CountryFlag from '@/components/CountryFlag';
 
 const fmtDZD = (n) => Number(Math.round(n || 0)).toLocaleString('fr-DZ', {
@@ -28,6 +29,7 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
   const [remarquesList, setRemarquesList] = useState([]);
   const [servicesList, setServicesList] = useState([]);
   const [selectedDevisForModal, setSelectedDevisForModal] = useState(null);
+  const [selectedVenteForPayment, setSelectedVenteForPayment] = useState(null);
 
   // Totals & KPI
   const [stats, setStats] = useState({
@@ -48,12 +50,35 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
     setLoading(true);
 
     try {
-      // 1. Fetch Ventes
-      const { data: vData } = await supabase
+      // 1. Fetch Ventes with articles relation
+      let { data: vData, error: vErr } = await supabase
         .from('ventes')
-        .select('*, services(nom)')
+        .select('*, services(nom), vente_articles(*, services(nom), fournisseurs(nom))')
         .eq('client_id', client.id)
         .order('date_vente', { ascending: false });
+
+      if (vErr) {
+        const fallbackRes = await supabase
+          .from('ventes')
+          .select('*, services(nom)')
+          .eq('client_id', client.id)
+          .order('date_vente', { ascending: false });
+        vData = fallbackRes.data;
+      }
+
+      if (vData) {
+        vData = vData.map(v => ({
+          ...v,
+          articles: (v.vente_articles && Array.isArray(v.vente_articles)) 
+            ? v.vente_articles.map(a => ({
+                ...a,
+                passagers: (a.details_specifiques && Array.isArray(a.details_specifiques.passagers) && a.details_specifiques.passagers.length > 0)
+                  ? a.details_specifiques.passagers
+                  : (a.passagers || [])
+              }))
+            : []
+        }));
+      }
 
       // 2. Fetch Omra Enregistrements
       const { data: omraData } = await supabase
@@ -328,9 +353,19 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
                             </div>
                           </div>
 
-                          <div className="text-left sm:text-right shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0">
-                            <span className="text-[10px] font-semibold text-slate-400 block">Montant Total</span>
-                            <span className="text-sm font-black text-emerald-700">{fmtDZD(v.total)} DZD</span>
+                          <div className="text-left sm:text-right shrink-0 border-t sm:border-t-0 pt-2 sm:pt-0 space-y-1.5">
+                            <div>
+                              <span className="text-[10px] font-semibold text-slate-400 block">Montant Total</span>
+                              <span className="text-sm font-black text-emerald-700">{fmtDZD(v.total)} DZD</span>
+                            </div>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setSelectedVenteForPayment(v)}
+                              className="h-7 text-[11px] font-bold gap-1 rounded-lg border-emerald-500/30 text-emerald-700 hover:bg-emerald-50"
+                            >
+                              <Coins size={12} className="text-emerald-600" /> Paiements
+                            </Button>
                           </div>
                         </div>
                       ))}
@@ -532,6 +567,20 @@ const ClientDossierModal = ({ isOpen, onClose, client, onOpenDevis, onOpenOmraGr
           isNew={false}
           servicesList={servicesList}
           clientsList={client ? [client] : []}
+        />
+      )}
+
+      {/* VentePaiementsModal opened directly from a sale in the client dossier */}
+      {selectedVenteForPayment && (
+        <VentePaiementsModal
+          vente={selectedVenteForPayment}
+          onClose={() => {
+            setSelectedVenteForPayment(null);
+            fetchClientDossier();
+          }}
+          onPaiementsUpdated={() => {
+            fetchClientDossier();
+          }}
         />
       )}
     </Dialog>

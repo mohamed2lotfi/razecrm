@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Loader2, Search, X, CheckCircle2, Circle, Clock, ChevronDown } from 'lucide-react';
+import { Loader2, Search, X, CheckCircle2, Circle, Clock, ChevronDown, Trash2 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,6 +8,7 @@ import { Select } from '@/components/ui/select';
 import { format, parseISO } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 const STATUTS = ['Nouveau', 'En cours de traitement', 'Issu', 'Délivré'];
 
@@ -20,11 +21,13 @@ const statutColor = (s) => {
 };
 
 const Visas = () => {
+  const { isAdmin } = useAuth();
   const [demandes, setDemandes] = useState([]);
   const [countries, setCountries] = useState([]);
   const [visaTypesMap, setVisaTypesMap] = useState({});
   const [countriesMap, setCountriesMap] = useState({});
   const [loading, setLoading] = useState(true);
+  const [deletingId, setDeletingId] = useState(null);
 
   const [filterStatut, setFilterStatut] = useState('');
   const [filterCountry, setFilterCountry] = useState('');
@@ -90,6 +93,49 @@ const Visas = () => {
       if (selectedDemande && selectedDemande.id === demandeId) {
         setSelectedDemande(prev => ({ ...prev, statut: newStatut }));
       }
+    }
+  };
+
+  const handleDeleteDemande = async (demandeId, passagerNom, e) => {
+    if (e) e.stopPropagation();
+
+    const confirmMessage = passagerNom
+      ? `Êtes-vous sûr de vouloir supprimer définitivement la demande de visa pour "${passagerNom}" ?`
+      : `Êtes-vous sûr de vouloir supprimer définitivement cette demande de visa ?`;
+
+    if (!window.confirm(confirmMessage)) return;
+
+    setDeletingId(demandeId);
+    try {
+      // 1. Delete associated tracking documents first
+      const { error: trackErr } = await supabase
+        .from('visa_dossier_tracking')
+        .delete()
+        .eq('demande_id', demandeId);
+
+      if (trackErr) {
+        console.warn("Erreur suppression dossier tracking:", trackErr);
+      }
+
+      // 2. Delete visa demande
+      const { error } = await supabase
+        .from('visa_demandes')
+        .delete()
+        .eq('id', demandeId);
+
+      if (error) {
+        throw error;
+      }
+
+      setDemandes(prev => prev.filter(d => d.id !== demandeId));
+      if (selectedDemande && selectedDemande.id === demandeId) {
+        setSelectedDemande(null);
+      }
+    } catch (err) {
+      console.error("Erreur lors de la suppression de la demande de visa:", err);
+      alert("Erreur lors de la suppression : " + (err.message || "Une erreur est survenue"));
+    } finally {
+      setDeletingId(null);
     }
   };
 
@@ -198,9 +244,23 @@ const Visas = () => {
                     </td>
                     <td className="px-4 py-3 text-muted-foreground text-xs">{fmtDate(d.created_at)}</td>
                     <td className="px-4 py-3 text-right">
-                      <Button size="sm" variant="outline" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); openDetail(d); }}>
-                        Détails
-                      </Button>
+                      <div className="flex items-center justify-end gap-1.5">
+                        <Button size="sm" variant="outline" className="h-7 text-xs" onClick={(e) => { e.stopPropagation(); openDetail(d); }}>
+                          Détails
+                        </Button>
+                        {isAdmin && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            disabled={deletingId === d.id}
+                            className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50 transition-colors"
+                            title="Supprimer cette demande"
+                            onClick={(e) => handleDeleteDemande(d.id, d.passager_nom, e)}
+                          >
+                            {deletingId === d.id ? <Loader2 size={13} className="animate-spin" /> : <Trash2 size={13} />}
+                          </Button>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -299,8 +359,20 @@ const Visas = () => {
               </div>
             </div>
 
-            <div className="p-4 border-t bg-slate-50 flex justify-end">
-              <Button variant="outline" onClick={() => setSelectedDemande(null)}>Fermer</Button>
+            <div className="p-4 border-t bg-slate-50 flex items-center justify-between">
+              {isAdmin ? (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  disabled={deletingId === selectedDemande.id}
+                  className="gap-1.5 text-xs font-semibold"
+                  onClick={(e) => handleDeleteDemande(selectedDemande.id, selectedDemande.passager_nom, e)}
+                >
+                  {deletingId === selectedDemande.id ? <Loader2 size={14} className="animate-spin" /> : <Trash2 size={14} />}
+                  Supprimer ce visa
+                </Button>
+              ) : <div />}
+              <Button variant="outline" size="sm" onClick={() => setSelectedDemande(null)}>Fermer</Button>
             </div>
           </div>
         </div>

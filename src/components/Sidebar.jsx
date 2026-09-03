@@ -2,18 +2,19 @@ import React, { useState, useEffect } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { 
-  LayoutDashboard, Users, CreditCard, FileText, 
+  Users, CreditCard, FileText, 
   Database, KanbanSquare, Globe, ChevronDown, ChevronRight, LogOut,
   TrendingDown, FileBarChart, Scan, Briefcase, Stamp, Contact, Mail,
-  ShieldCheck, UserCheck, Package, Calculator, User
+  ShieldCheck, UserCheck, Package, Calculator, User, Coins
 } from 'lucide-react';
-import useLocalStorage from '@/hooks/useLocalStorage';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
 import UserAvatar from '@/components/UserAvatar';
+import AlertsBell from '@/components/AlertsBell';
 
 const navItems = [
   { to: '/', icon: CreditCard, label: 'Ventes', end: true },
+  { to: '/paiements', icon: Coins, label: 'Paiements Ventes' },
   { to: '/pipeline', icon: KanbanSquare, label: 'Devis' },
   { to: '/simulateur-devis', icon: Calculator, label: 'Simulateur Devis' },
   { to: '/clients', icon: Users, label: 'Clients' },
@@ -80,7 +81,7 @@ const Sidebar = () => {
   const [groupes, setGroupes] = useState([]);
   const location = useLocation();
   const navigate = useNavigate();
-  const { signOut, user, profile, isAdmin, isAgent, role } = useAuth();
+  const { signOut, user, profile, isAdmin } = useAuth();
   
   const isOmraActive = location.pathname.startsWith('/omra');
   const [isOmraOpen, setIsOmraOpen] = useState(isOmraActive);
@@ -110,18 +111,20 @@ const Sidebar = () => {
   };
 
   const displayName = profile?.nom || user?.email?.split('@')[0] || 'Utilisateur';
-  const userInitial = (displayName?.charAt(0) || 'U').toUpperCase();
 
   return (
     <aside className="w-[260px] bg-sidebar fixed h-screen left-0 top-0 z-40 flex flex-col p-4 overflow-y-auto custom-scrollbar">
-      <div className="flex items-center gap-3 px-2 mb-8 mt-2 cursor-pointer group" onClick={() => navigate('/')}>
-        <div className="w-10 h-10 rounded-xl bg-white/10 p-1 flex items-center justify-center border border-white/15 shadow-sm overflow-hidden group-hover:scale-105 transition-transform">
-          <img src="/logo.png" alt="Agence El-Mokhtar" className="w-full h-full object-contain" />
+      <div className="flex items-center justify-between px-2 mb-8 mt-2">
+        <div className="flex items-center gap-3 cursor-pointer group min-w-0" onClick={() => navigate('/')}>
+          <div className="w-10 h-10 rounded-xl bg-white/10 p-1 flex items-center justify-center border border-white/15 shadow-sm overflow-hidden group-hover:scale-105 transition-transform shrink-0">
+            <img src="/logo.png" alt="Agence El-Mokhtar" className="w-full h-full object-contain" />
+          </div>
+          <div className="flex flex-col min-w-0">
+            <span className="text-sm font-black text-white tracking-tight leading-tight truncate">EL MOKHTAR TRAVEL</span>
+            <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold truncate">CRM</span>
+          </div>
         </div>
-        <div className="flex flex-col">
-          <span className="text-base font-black text-white tracking-tight leading-none">El-Mokhtar</span>
-          <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold mt-0.5">Voyages & Omra</span>
-        </div>
+        <AlertsBell />
       </div>
       
       <nav className="flex flex-col gap-0.5 flex-1">

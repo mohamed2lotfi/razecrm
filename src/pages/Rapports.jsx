@@ -125,20 +125,30 @@ const Rapports = () => {
     const now = new Date();
     let start, end;
     if (periodType === 'today') {
-      start = new Date(now.setHours(0,0,0,0)).toISOString();
-      end = new Date(now.setHours(23,59,59,999)).toISOString();
+      const s = new Date();
+      s.setHours(0, 0, 0, 0);
+      const e = new Date();
+      e.setHours(23, 59, 59, 999);
+      start = s.toISOString();
+      end = e.toISOString();
     } else if (periodType === 'this_month') {
-      start = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+      start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0).toISOString();
       end = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
     } else if (periodType === 'last_month') {
-      start = new Date(now.getFullYear(), now.getMonth() - 1, 1).toISOString();
+      start = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0).toISOString();
       end = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999).toISOString();
     } else if (periodType === 'this_year') {
-      start = new Date(now.getFullYear(), 0, 1).toISOString();
+      start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0).toISOString();
       end = new Date(now.getFullYear(), 11, 31, 23, 59, 59, 999).toISOString();
     } else if (periodType === 'custom') {
-      start = customStartDate ? new Date(customStartDate).toISOString() : new Date('2000-01-01').toISOString();
-      let e = customEndDate ? new Date(customEndDate) : now;
+      if (customStartDate) {
+        const s = new Date(customStartDate);
+        s.setHours(0, 0, 0, 0);
+        start = s.toISOString();
+      } else {
+        start = new Date('2000-01-01T00:00:00.000Z').toISOString();
+      }
+      let e = customEndDate ? new Date(customEndDate) : new Date();
       e.setHours(23, 59, 59, 999);
       end = e.toISOString();
     }
@@ -168,22 +178,47 @@ const Rapports = () => {
 
   const fetchTransactions = async () => {
     setLoading(true);
-    let vQuery = supabase.from('ventes').select('*');
+    let vQuery = supabase.from('ventes').select('*, vente_articles(*, services(*), fournisseurs(*))');
     let oQuery = supabase.from('outcomes').select('*');
     let opQuery = supabase.from('omra_paiements').select('*');
     
     if (periodType !== 'all') {
       const range = getSupabaseDateRange();
       if (range.start && range.end) {
-        vQuery = vQuery.gte('created_at', range.start).lte('created_at', range.end);
-        oQuery = oQuery.gte('created_at', range.start).lte('created_at', range.end);
-        opQuery = opQuery.gte('created_at', range.start).lte('created_at', range.end);
+        vQuery = vQuery.or(`and(date_vente.gte.${range.start},date_vente.lte.${range.end}),and(date_vente.is.null,created_at.gte.${range.start},created_at.lte.${range.end})`);
+        oQuery = oQuery.or(`and(date_paiement.gte.${range.start},date_paiement.lte.${range.end}),and(date_paiement.is.null,created_at.gte.${range.start},created_at.lte.${range.end})`);
+        opQuery = opQuery.or(`and(date_paiement.gte.${range.start},date_paiement.lte.${range.end}),and(date_paiement.is.null,created_at.gte.${range.start},created_at.lte.${range.end})`);
       }
     }
 
-    const [vRes, oRes, opRes] = await Promise.all([vQuery, oQuery, opQuery]);
+    let [vRes, oRes, opRes] = await Promise.all([vQuery, oQuery, opQuery]);
     
-    if (vRes.data) setVentes(vRes.data);
+    // Fallback if vente_articles relation is not yet loaded
+    if (vRes.error) {
+      let fallbackVQuery = supabase.from('ventes').select('*');
+      if (periodType !== 'all') {
+        const range = getSupabaseDateRange();
+        if (range.start && range.end) {
+          fallbackVQuery = fallbackVQuery.or(`and(date_vente.gte.${range.start},date_vente.lte.${range.end}),and(date_vente.is.null,created_at.gte.${range.start},created_at.lte.${range.end})`);
+        }
+      }
+      vRes = await fallbackVQuery;
+    }
+
+    if (vRes.data) {
+      const normVentes = vRes.data.map(v => ({
+        ...v,
+        articles: (v.vente_articles && Array.isArray(v.vente_articles)) 
+          ? v.vente_articles.map(a => ({
+              ...a,
+              passagers: (a.details_specifiques && Array.isArray(a.details_specifiques.passagers) && a.details_specifiques.passagers.length > 0)
+                ? a.details_specifiques.passagers
+                : (a.passagers || [])
+            }))
+          : []
+      }));
+      setVentes(normVentes);
+    }
     if (oRes.data) setOutcomes(oRes.data);
     if (opRes.data) setOmraPaiements(opRes.data);
     
@@ -224,11 +259,15 @@ const Rapports = () => {
     }
 
     if (periodType === 'custom') {
-      if (customStartDate && new Date(dateStr) < new Date(customStartDate)) return false;
+      if (customStartDate) {
+        const start = new Date(customStartDate);
+        start.setHours(0, 0, 0, 0);
+        if (d < start) return false;
+      }
       if (customEndDate) {
         const end = new Date(customEndDate);
         end.setHours(23, 59, 59, 999);
-        if (new Date(dateStr) > end) return false;
+        if (d > end) return false;
       }
       return true;
     }
@@ -264,17 +303,92 @@ const Rapports = () => {
       };
     }
 
+    // Helper: calculate the specific portion belonging to selectedFournisseurId for a sale
+    const getSaleSupplierDetails = (v) => {
+      const isRembourse = v.etat === 'Remboursé';
+
+      if (v.articles && Array.isArray(v.articles) && v.articles.length > 0) {
+        const matchingArticles = v.articles.filter(a => 
+          (a.fournisseur_id === selectedFournisseurId) || 
+          (!a.fournisseur_id && v.fournisseur_id === selectedFournisseurId)
+        );
+
+        if (matchingArticles.length === 0) return null;
+
+        let supplierTarifBase = 0;
+        let supplierTotalVente = 0;
+        let supplierCommission = 0;
+
+        if (isRembourse) {
+          // En cas de vente remboursée, seule la pénalité fournisseur retenue (Total vente net - Commission agence) reste due
+          const refundPenalite = Math.max(0, (parseFloat(v.total) || 0) - (parseFloat(v.commission) || 0));
+          supplierTarifBase = refundPenalite;
+          supplierTotalVente = parseFloat(v.total) || 0;
+          supplierCommission = parseFloat(v.commission) || 0;
+        } else {
+          supplierTarifBase = matchingArticles.reduce((sum, a) => {
+            const pa = parseFloat(a.prix_achat);
+            if (!isNaN(pa) && a.prix_achat !== '') return sum + pa;
+            const pv = parseFloat(a.prix_vente) || 0;
+            const comm = parseFloat(a.commission) || 0;
+            return sum + (pv - comm);
+          }, 0);
+          supplierTotalVente = matchingArticles.reduce((sum, a) => sum + (parseFloat(a.prix_vente) || 0), 0);
+          supplierCommission = matchingArticles.reduce((sum, a) => sum + (parseFloat(a.commission) || 0), 0);
+        }
+
+        return {
+          supplierTarifBase,
+          supplierTotalVente,
+          supplierCommission,
+          matchingArticles,
+          isPartial: matchingArticles.length < v.articles.length,
+          totalArticlesCount: v.articles.length
+        };
+      } else {
+        // Legacy single-service sale without articles array
+        if (v.fournisseur_id === selectedFournisseurId) {
+          let cost = 0;
+          if (isRembourse) {
+            cost = Math.max(0, (parseFloat(v.total) || 0) - (parseFloat(v.commission) || 0));
+          } else {
+            const costCandidate = Number(v.tarif_base);
+            cost = (!isNaN(costCandidate) && costCandidate > 0) ? costCandidate : Math.max(0, Number(v.total) - Number(v.commission));
+          }
+          return {
+            supplierTarifBase: cost,
+            supplierTotalVente: Number(v.total) || 0,
+            supplierCommission: Number(v.commission) || 0,
+            matchingArticles: [],
+            isPartial: false,
+            totalArticlesCount: 1
+          };
+        }
+        return null;
+      }
+    };
+
     // 1. Filter sales for selected supplier & period (excluding manual audit exclusions)
-    const supplierVentes = ventes.filter(v => 
-      v.fournisseur_id === selectedFournisseurId && 
-      isDateInPeriod(v.date_vente || v.created_at) &&
-      !excludedAuditVenteIds.includes(v.id)
-    );
-    const totalVentesTarif = supplierVentes.reduce((sum, v) => {
-      // Tarif fournisseur is base rate or (total - commission)
-      const cost = Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0;
-      return sum + cost;
-    }, 0);
+    const supplierVentes = [];
+    ventes.forEach(v => {
+      if (!isDateInPeriod(v.date_vente || v.created_at)) return;
+      if (excludedAuditVenteIds.includes(v.id)) return;
+
+      const details = getSaleSupplierDetails(v);
+      if (details) {
+        supplierVentes.push({
+          ...v,
+          supplierTarifBase: details.supplierTarifBase,
+          supplierTotalVente: details.supplierTotalVente,
+          supplierCommission: details.supplierCommission,
+          matchingArticles: details.matchingArticles,
+          isPartial: details.isPartial,
+          totalArticlesCount: details.totalArticlesCount
+        });
+      }
+    });
+
+    const totalVentesTarif = supplierVentes.reduce((sum, v) => sum + v.supplierTarifBase, 0);
 
     // 2. Filter envelopes & outcomes for selected supplier & period
     const supplierEnvelopes = enveloppes.filter(e => e.fournisseur_id === selectedFournisseurId || (e.type_enveloppe === 'fournisseur' && e.fournisseur_id === selectedFournisseurId));
@@ -310,10 +424,32 @@ const Rapports = () => {
     });
 
     supplierVentes.forEach(v => {
-      if (v.service_id && serviceMap[v.service_id]) {
-        serviceMap[v.service_id].ventesCount += 1;
-        const cost = Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0;
-        serviceMap[v.service_id].ventesTarifTotal += cost;
+      const isRembourse = v.etat === 'Remboursé';
+      if (v.matchingArticles && v.matchingArticles.length > 0) {
+        v.matchingArticles.forEach(art => {
+          const matchedService = services.find(s => 
+            s.id === art.service_id || s.nom.toLowerCase() === (art.categorie || '').toLowerCase()
+          ) || (v.service_id ? services.find(s => s.id === v.service_id) : null);
+
+          if (matchedService && serviceMap[matchedService.id]) {
+            serviceMap[matchedService.id].ventesCount += 1;
+            let artCost = 0;
+            if (isRembourse) {
+              artCost = v.supplierTarifBase / (v.matchingArticles.length || 1);
+            } else {
+              const pa = parseFloat(art.prix_achat);
+              artCost = (!isNaN(pa) && art.prix_achat !== '') 
+                ? pa 
+                : ((parseFloat(art.prix_vente) || 0) - (parseFloat(art.commission) || 0));
+            }
+            serviceMap[matchedService.id].ventesTarifTotal += artCost;
+          }
+        });
+      } else {
+        if (v.service_id && serviceMap[v.service_id]) {
+          serviceMap[v.service_id].ventesCount += 1;
+          serviceMap[v.service_id].ventesTarifTotal += v.supplierTarifBase;
+        }
       }
     });
 
@@ -341,14 +477,52 @@ const Rapports = () => {
         .filter(Boolean);
 
       // Find sales matching services linked to this sous-enveloppe
-      const matchingVentes = supplierVentes.filter(v => 
-        linkedServiceIds.length > 0 ? linkedServiceIds.includes(v.service_id) : false
-      );
+      const matchingVentes = [];
+      let ventesTarifTotal = 0;
 
-      const ventesTarifTotal = matchingVentes.reduce((sum, v) => {
-        const cost = Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0;
-        return sum + cost;
-      }, 0);
+      supplierVentes.forEach(v => {
+        const isRembourse = v.etat === 'Remboursé';
+        if (v.matchingArticles && v.matchingArticles.length > 0) {
+          const seArticles = v.matchingArticles.filter(art => {
+            const matchedService = services.find(s => 
+              s.id === art.service_id || s.nom.toLowerCase() === (art.categorie || '').toLowerCase()
+            );
+            const sId = matchedService?.id || art.service_id || v.service_id;
+            return linkedServiceIds.includes(sId);
+          });
+
+          if (seArticles.length > 0) {
+            let costForThisSubEnv = 0;
+            if (isRembourse) {
+              costForThisSubEnv = v.supplierTarifBase;
+            } else {
+              costForThisSubEnv = seArticles.reduce((sum, art) => {
+                const pa = parseFloat(art.prix_achat);
+                if (!isNaN(pa) && art.prix_achat !== '') return sum + pa;
+                const pv = parseFloat(art.prix_vente) || 0;
+                const comm = parseFloat(art.commission) || 0;
+                return sum + (pv - comm);
+              }, 0);
+            }
+
+            ventesTarifTotal += costForThisSubEnv;
+            matchingVentes.push({
+              ...v,
+              subEnvMatchingArticles: seArticles,
+              subEnvCost: costForThisSubEnv
+            });
+          }
+        } else {
+          if (linkedServiceIds.includes(v.service_id)) {
+            ventesTarifTotal += v.supplierTarifBase;
+            matchingVentes.push({
+              ...v,
+              subEnvMatchingArticles: [],
+              subEnvCost: v.supplierTarifBase
+            });
+          }
+        }
+      });
 
       // Find outcomes paid specifically under this sous-enveloppe
       const matchingOutcomes = supplierOutcomes.filter(o => o.sous_enveloppe_id === se.id);
@@ -382,8 +556,51 @@ const Rapports = () => {
     const unassignedOutcomesTotal = unassignedOutcomes.reduce((sum, o) => sum + (Number(o.montant_dzd) || Number(o.montant) || 0), 0);
 
     const allLinkedServiceIds = new Set(supplierSubEnvs.flatMap(se => se.service_ids || []));
-    const unassignedVentes = supplierVentes.filter(v => !v.service_id || !allLinkedServiceIds.has(v.service_id));
-    const unassignedVentesTarifTotal = unassignedVentes.reduce((sum, v) => sum + (Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0), 0);
+    const unassignedVentes = [];
+    let unassignedVentesTarifTotal = 0;
+
+    supplierVentes.forEach(v => {
+      const isRembourse = v.etat === 'Remboursé';
+      if (v.matchingArticles && v.matchingArticles.length > 0) {
+        const unassignedArticles = v.matchingArticles.filter(art => {
+          const matchedService = services.find(s => 
+            s.id === art.service_id || s.nom.toLowerCase() === (art.categorie || '').toLowerCase()
+          );
+          const sId = matchedService?.id || art.service_id || v.service_id;
+          return !sId || !allLinkedServiceIds.has(sId);
+        });
+
+        if (unassignedArticles.length > 0) {
+          let cost = 0;
+          if (isRembourse) {
+            cost = v.supplierTarifBase;
+          } else {
+            cost = unassignedArticles.reduce((sum, art) => {
+              const pa = parseFloat(art.prix_achat);
+              if (!isNaN(pa) && art.prix_achat !== '') return sum + pa;
+              const pv = parseFloat(art.prix_vente) || 0;
+              const comm = parseFloat(art.commission) || 0;
+              return sum + (pv - comm);
+            }, 0);
+          }
+          unassignedVentesTarifTotal += cost;
+          unassignedVentes.push({
+            ...v,
+            subEnvMatchingArticles: unassignedArticles,
+            subEnvCost: cost
+          });
+        }
+      } else {
+        if (!v.service_id || !allLinkedServiceIds.has(v.service_id)) {
+          unassignedVentesTarifTotal += v.supplierTarifBase;
+          unassignedVentes.push({
+            ...v,
+            subEnvMatchingArticles: [],
+            subEnvCost: v.supplierTarifBase
+          });
+        }
+      }
+    });
 
     if (unassignedOutcomesTotal > 0 || unassignedVentesTarifTotal > 0) {
       const ecart = unassignedOutcomesTotal - unassignedVentesTarifTotal;
@@ -439,13 +656,18 @@ const Rapports = () => {
 
     const ventesRows = (selectedSubEnvDetail.matchingVentes || []).map(v => {
       const sObj = services.find(s => s.id === v.service_id);
-      const cost = Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0;
+      const cost = v.subEnvCost !== undefined ? v.subEnvCost : (v.supplierTarifBase || (Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0));
+      
+      const articlesLabel = (v.subEnvMatchingArticles && v.subEnvMatchingArticles.length > 0)
+        ? v.subEnvMatchingArticles.map(a => `[${a.categorie}] ${a.designation || 'Prestation'}`).join(', ')
+        : (v.details || '—');
+
       return `
         <tr>
           <td>${v.date_vente ? new Date(v.date_vente).toLocaleDateString('fr-FR') : '—'}</td>
           <td><b>${v.client_nom || '—'}</b></td>
           <td>${sObj?.nom || '—'}</td>
-          <td>${v.details || '—'}</td>
+          <td>${articlesLabel}</td>
           <td style="text-align: right; font-weight: bold; color: #1d4ed8;">${cost.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD</td>
         </tr>
       `;
@@ -1596,7 +1818,7 @@ const Rapports = () => {
                         <th className="px-3.5 py-2.5">Date</th>
                         <th className="px-3.5 py-2.5">Client</th>
                         <th className="px-3.5 py-2.5">Service</th>
-                        <th className="px-3.5 py-2.5">Détails</th>
+                        <th className="px-3.5 py-2.5">Articles & Prestations Concernés</th>
                         <th className="px-3.5 py-2.5 text-right">Tarif Dû (DZD)</th>
                         <th className="px-3.5 py-2.5 text-center">Action</th>
                       </tr>
@@ -1604,7 +1826,9 @@ const Rapports = () => {
                     <tbody className="divide-y">
                       {selectedSubEnvDetail.matchingVentes.map((v) => {
                         const sObj = services.find(s => s.id === v.service_id);
-                        const cost = Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0;
+                        const cost = v.subEnvCost !== undefined ? v.subEnvCost : (v.supplierTarifBase || (Number(v.tarif_base) || (Number(v.total) - Number(v.commission)) || 0));
+                        const hasSpecificArticles = v.subEnvMatchingArticles && v.subEnvMatchingArticles.length > 0;
+                        
                         return (
                           <tr key={v.id} className="hover:bg-muted/20">
                             <td className="px-3.5 py-2.5 text-muted-foreground whitespace-nowrap">
@@ -1612,8 +1836,40 @@ const Rapports = () => {
                             </td>
                             <td className="px-3.5 py-2.5 font-bold text-foreground">{v.client_nom}</td>
                             <td className="px-3.5 py-2.5 font-medium text-blue-700">{sObj?.nom || '—'}</td>
-                            <td className="px-3.5 py-2.5 text-muted-foreground truncate max-w-[180px]" title={v.details}>{v.details || '—'}</td>
-                            <td className="px-3.5 py-2.5 text-right font-extrabold text-blue-700">
+                            <td className="px-3.5 py-2.5">
+                              {v.etat === 'Remboursé' && (
+                                <div className="mb-1">
+                                  <span className="text-[10px] font-black bg-rose-100 text-rose-800 dark:bg-rose-950/60 dark:text-rose-300 px-1.5 py-0.5 rounded border border-rose-200 dark:border-rose-800 inline-block">
+                                    ↩️ Vente Remboursée (Pénalité Fournisseur)
+                                  </span>
+                                </div>
+                              )}
+                              {hasSpecificArticles ? (
+                                <div className="space-y-1">
+                                  {v.subEnvMatchingArticles.map((art, idx) => (
+                                    <div key={idx} className="flex items-center gap-1.5 font-semibold text-slate-800">
+                                      <span className="text-[10px] bg-primary/10 text-primary px-1.5 py-0.5 rounded font-black border border-primary/20">
+                                        {art.categorie || 'Article'}
+                                      </span>
+                                      <span>{art.designation || 'Prestation'}</span>
+                                      <span className="text-muted-foreground text-[10px]">
+                                        {v.etat === 'Remboursé' ? `(Pén. ${cost.toLocaleString('fr-DZ')} DZD)` : `(${(parseFloat(art.prix_achat) || (parseFloat(art.prix_vente) - parseFloat(art.commission)) || 0).toLocaleString('fr-DZ')} DZD)`}
+                                      </span>
+                                    </div>
+                                  ))}
+                                  {v.isPartial && (
+                                    <span className="text-[10px] text-amber-700 font-bold bg-amber-50 px-1.5 py-0.5 rounded border border-amber-200 inline-block mt-0.5">
+                                      ⚡ Vente Multi-Fournisseurs ({v.subEnvMatchingArticles.length}/{v.totalArticlesCount} article(s) comptabilisé(s))
+                                    </span>
+                                  )}
+                                </div>
+                              ) : (
+                                <span className="text-muted-foreground truncate max-w-[200px] block" title={v.details}>
+                                  {v.details || '—'}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3.5 py-2.5 text-right font-extrabold text-blue-700 whitespace-nowrap">
                               {cost.toLocaleString('fr-DZ', { minimumFractionDigits: 2 })} DZD
                             </td>
                             <td className="px-3.5 py-2.5 text-center whitespace-nowrap">

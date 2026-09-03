@@ -135,16 +135,38 @@ const Pelerins = () => {
       ) || groupe?.hotels?.[0];
       
       const enrPaiements = paiements.filter(p => p.enregistrement_id === enr.id);
-      const totalEnrPaid = enrPaiements.reduce((sum, p) => sum + (Number(p.montant_dzd) || 0), 0);
-      let remainingPayment = totalEnrPaid;
 
       const pelerinsFromEnr = [
-        ...(enr.pelerins || []).map(p => ({ ...p, isEnfantSansLit: false })),
-        ...(enr.enfants_sans_lit || []).map(enf => ({ ...enf, tarifPerso: enf.tarif, chd: true, isEnfantSansLit: true }))
+        ...(enr.pelerins || []).map((p, idx) => ({ ...p, memberKey: `pelerin-${idx}`, isEnfantSansLit: false })),
+        ...(enr.enfants_sans_lit || []).map((enf, idx) => ({ ...enf, memberKey: `enfant-${idx}`, tarifPerso: enf.tarif, chd: true, isEnfantSansLit: true }))
       ];
 
       const passagersAdultes = pelerinsFromEnr.filter(p => !p.guide && !p.chd && !p.isEnfantSansLit);
       const reductionPartagee = passagersAdultes.length > 0 ? Number(enr.reduction || 0) / passagersAdultes.length : 0;
+
+      // 1. Direct payment matching by member name
+      const memberDirectPayments = {};
+      const usedPaymentIds = new Set();
+
+      pelerinsFromEnr.forEach(p => {
+        memberDirectPayments[p.memberKey] = 0;
+        const pNomLower = (p.nom || '').trim().toLowerCase();
+        if (!pNomLower) return;
+
+        enrPaiements.forEach(pmt => {
+          if (usedPaymentIds.has(pmt.id)) return;
+          const pmtNomLower = (pmt.nom_client || '').trim().toLowerCase();
+          if (pmtNomLower && pmtNomLower === pNomLower) {
+            memberDirectPayments[p.memberKey] += Number(pmt.montant_dzd) || 0;
+            usedPaymentIds.add(pmt.id);
+          }
+        });
+      });
+
+      // 2. Pool of unassigned/generic payments
+      let unassignedPool = enrPaiements
+        .filter(pmt => !usedPaymentIds.has(pmt.id))
+        .reduce((sum, pmt) => sum + (Number(pmt.montant_dzd) || 0), 0);
 
       pelerinsFromEnr.forEach((pelerin, pIdx) => {
         if (!pelerin.nom || pelerin.nom.trim() === '') return;
@@ -174,10 +196,15 @@ const Pelerins = () => {
         }
         totalDu = Math.max(0, totalDu);
 
-        const totalPaye = Math.min(totalDu, remainingPayment);
-        remainingPayment -= totalPaye;
+        let totalPaye = memberDirectPayments[pelerin.memberKey] || 0;
+        if (totalPaye < totalDu && unassignedPool > 0) {
+          const needed = totalDu - totalPaye;
+          const takeFromPool = Math.min(needed, unassignedPool);
+          totalPaye += takeFromPool;
+          unassignedPool -= takeFromPool;
+        }
 
-        const reste = totalDu - totalPaye;
+        const reste = Math.max(0, totalDu - totalPaye);
 
         let etat = 'pending';
         if (reste === 0 && totalDu > 0) etat = 'payé';

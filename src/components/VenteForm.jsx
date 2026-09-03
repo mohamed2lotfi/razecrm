@@ -3,7 +3,8 @@ import {
   Plus, Trash2, Search, Loader2, Pencil, Sparkles, Plane, Building2, 
   FileText, Bus, Compass, Shield, Coins, TrendingUp, CheckCircle2, User, 
   Calendar, Layers, Tag, DollarSign, Calculator, ChevronDown, HelpCircle, 
-  Package, ArrowUpRight, Check, X, CreditCard, ShieldCheck, Users, ArrowRight, Globe, MapPin
+  Package, ArrowUpRight, Check, X, CreditCard, ShieldCheck, Users, ArrowRight, Globe, MapPin,
+  Clock, FileCheck, RefreshCw, AlertCircle, BookmarkCheck
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -44,6 +45,14 @@ const createEmptyArticle = (categorie = 'Billeterie', defaultDest = '') => ({
   commission: '',
   prix_vente: '',
   fournisseur_id: '',
+  visa_country_id: '',
+  visa_type_id: '',
+  visa_dossier: [],
+  airline_id: '',
+  compagnie_nom: '',
+  numero_billet: '',
+  pnr: '',
+  itineraire: '',
   notes: ''
 });
 
@@ -60,6 +69,12 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
 
   // Airlines data
   const [airlines, setAirlines] = useState([]);
+
+  // Fournisseur Quick Add state
+  const [isAddingFournisseur, setIsAddingFournisseur] = useState(false);
+  const [newFournisseurNom, setNewFournisseurNom] = useState('');
+  const [targetArticleIdxForFournisseur, setTargetArticleIdxForFournisseur] = useState(null);
+  const [savingFournisseur, setSavingFournisseur] = useState(false);
 
   // Form Global Fields
   const [dateVente, setDateVente] = useState(() => {
@@ -85,8 +100,43 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
 
   // Passagers list (Determines PAX Count)
   const [personnes, setPersonnes] = useState(() => {
+    // 1. Check direct passagers array on initialData
+    if (initialData?.passagers && Array.isArray(initialData.passagers) && initialData.passagers.length > 0) {
+      return initialData.passagers.map(p => ({ nom: p.nom || '', passport: p.passport || '' }));
+    }
+    // 2. Check if any article has stored passagers in JSONB / details_specifiques
+    const rawArticlesList = initialData?.vente_articles || initialData?.articles;
+    if (rawArticlesList && Array.isArray(rawArticlesList) && rawArticlesList.length > 0) {
+      const artWithPax = rawArticlesList.find(a => 
+        (Array.isArray(a.passagers) && a.passagers.length > 0) ||
+        (Array.isArray(a.details_specifiques?.passagers) && a.details_specifiques.passagers.length > 0)
+      );
+      if (artWithPax) {
+        const pList = (Array.isArray(artWithPax.passagers) && artWithPax.passagers.length > 0)
+          ? artWithPax.passagers
+          : artWithPax.details_specifiques.passagers;
+        return pList.map(p => ({ nom: p.nom || '', passport: p.passport || '' }));
+      }
+    }
+    // 3. Check _visaMeta
     if (initialData?._visaMeta?.passagers && Array.isArray(initialData._visaMeta.passagers) && initialData._visaMeta.passagers.length > 0) {
       return initialData._visaMeta.passagers.map(p => ({ nom: p.nom || '', passport: p.passport || '' }));
+    }
+    // 4. Fallback: Parse from details string (e.g. "(2 Pax: Mohamed [A123], Fatima [B456])" or "(2 Pax: Mohamed, Fatima)")
+    if (initialData?.details) {
+      const paxMatch = initialData.details.match(/\(\d+\s*Pax(?::\s*([^)]+))?\)/i);
+      if (paxMatch && paxMatch[1]) {
+        const rawPaxString = paxMatch[1].trim();
+        const extracted = rawPaxString.split(',').map(item => {
+          const trimmed = item.trim();
+          const pMatch = trimmed.match(/^([^\[]+)(?:\[(.*?)\])?$/);
+          if (pMatch) {
+            return { nom: pMatch[1].trim(), passport: (pMatch[2] || '').trim() };
+          }
+          return { nom: trimmed, passport: '' };
+        }).filter(p => p.nom.length > 0);
+        if (extracted.length > 0) return extracted;
+      }
     }
     return [];
   });
@@ -96,25 +146,47 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
 
   // Multi-Articles Array
   const [articles, setArticles] = useState(() => {
-    if (initialData?.articles && Array.isArray(initialData.articles) && initialData.articles.length > 0) {
-      return initialData.articles.map(a => {
-        const pa = a.prix_achat !== undefined ? a.prix_achat : (a.tarif_base || '');
-        const pv = a.prix_vente !== undefined ? a.prix_vente : (a.total || '');
-        let comm = a.commission !== undefined ? a.commission : '';
+    const rawList = (initialData?.vente_articles && Array.isArray(initialData.vente_articles) && initialData.vente_articles.length > 0)
+      ? initialData.vente_articles
+      : (initialData?.articles && Array.isArray(initialData.articles) && initialData.articles.length > 0)
+        ? initialData.articles
+        : null;
+
+    if (rawList) {
+      return rawList.map(a => {
+        const pa = a.prix_achat !== undefined && a.prix_achat !== null ? a.prix_achat : (a.tarif_base || '');
+        const pv = a.prix_vente !== undefined && a.prix_vente !== null ? a.prix_vente : (a.total || '');
+        let comm = a.commission !== undefined && a.commission !== null ? a.commission : '';
         if (comm === '' && pa !== '' && pv !== '') {
           comm = (parseFloat(pv) || 0) - (parseFloat(pa) || 0);
         }
 
+        const paxList = (Array.isArray(a.passagers) && a.passagers.length > 0)
+          ? a.passagers
+          : (Array.isArray(a.details_specifiques?.passagers) && a.details_specifiques.passagers.length > 0)
+            ? a.details_specifiques.passagers
+            : [];
+
         return {
           id: a.id || 'art_' + Math.random().toString(36).substring(2, 7),
-          categorie: a.categorie || 'Billeterie',
+          categorie: a.categorie || a.services?.nom || a.service?.nom || 'Billeterie',
           service_id: a.service_id || '',
           destination: a.destination || initialData?.destination || '',
-          designation: a.designation || a.description || '',
+          designation: a.designation || a.description || a.details || '',
           prix_achat: pa,
           commission: comm,
           prix_vente: pv,
           fournisseur_id: a.fournisseur_id || '',
+          visa_country_id: a.visa_country_id || a.country_id || initialData?._visaMeta?.country_id || '',
+          visa_type_id: a.visa_type_id || initialData?._visaMeta?.visa_type_id || '',
+          visa_dossier: a.visa_dossier || initialData?._visaMeta?.dossier || [],
+          airline_id: a.airline_id || '',
+          compagnie_nom: a.compagnie_nom || a.airlines?.nom || '',
+          numero_billet: a.numero_billet || '',
+          pnr: a.pnr || '',
+          itineraire: a.itineraire || '',
+          passagers: paxList,
+          details_specifiques: a.details_specifiques || {},
           notes: a.notes || ''
         };
       });
@@ -142,7 +214,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
     const [cRes, sRes, fRes, dRes, vcRes, vtRes, aRes] = await Promise.all([
       supabase.from('clients').select('*').order('created_at', { ascending: false }),
       supabase.from('services').select('*').order('created_at'),
-      supabase.from('fournisseurs').select('*').order('created_at'),
+      supabase.from('fournisseurs').select('*').order('nom'),
       supabase.from('destinations').select('*').order('nom', { ascending: true }),
       supabase.from('visa_countries').select('*').order('nom'),
       supabase.from('visa_types').select('*').order('nom'),
@@ -155,6 +227,42 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
     if (vcRes.data) setVisaCountries(vcRes.data);
     if (vtRes.data) setVisaTypes(vtRes.data);
     if (aRes.data) setAirlines(aRes.data);
+
+    // If editing existing sale, check if vente_articles or visa_demandes has registered passagers
+    if (initialData?.id) {
+      try {
+        const [vaRes, vdRes] = await Promise.all([
+          supabase.from('vente_articles').select('details_specifiques').eq('vente_id', initialData.id),
+          supabase.from('visa_demandes').select('passager_nom').eq('vente_id', initialData.id)
+        ]);
+
+        let loadedPax = [];
+        if (vaRes.data && vaRes.data.length > 0) {
+          const artWithPax = vaRes.data.find(a => 
+            Array.isArray(a.details_specifiques?.passagers) && a.details_specifiques.passagers.length > 0
+          );
+          if (artWithPax) {
+            loadedPax = artWithPax.details_specifiques.passagers;
+          }
+        }
+
+        if (loadedPax.length === 0 && vdRes.data && vdRes.data.length > 0) {
+          loadedPax = vdRes.data.map(vd => ({ nom: vd.passager_nom || '', passport: '' }));
+        }
+
+        if (loadedPax.length > 0) {
+          setPersonnes(prev => {
+            if (prev.length === 0) {
+              return loadedPax.map(p => ({ nom: p.nom || '', passport: p.passport || '' }));
+            }
+            return prev;
+          });
+        }
+      } catch (err) {
+        console.error("Error loading passagers from DB:", err);
+      }
+    }
+
     setLoadingData(false);
   };
 
@@ -216,9 +324,12 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
     setClientId(client.id);
     setShowDropdown(false);
 
-    if (personnes.length === 0) {
-      setPersonnes([{ nom: client.nom, passport: client.passport || '' }]);
-    }
+    setPersonnes(prev => {
+      if (prev.length === 1) {
+        return [{ nom: client.nom, passport: client.passport || prev[0].passport || '' }];
+      }
+      return prev;
+    });
   };
 
   const handleSaveNewClient = async (newClientData) => {
@@ -229,10 +340,40 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
       setClientSearch(inserted.nom);
       setClientId(inserted.id);
       setIsAddingClient(false);
-      if (personnes.length === 0) {
-        setPersonnes([{ nom: inserted.nom, passport: inserted.passport || '' }]);
-      }
+      setPersonnes(prev => {
+        if (prev.length === 1) {
+          return [{ nom: inserted.nom, passport: inserted.passport || prev[0].passport || '' }];
+        }
+        return prev;
+      });
     }
+  };
+
+  // ── QUICK ADD FOURNISSEUR ──────────────────────────────────────────
+  const handleOpenAddFournisseur = (articleIdx) => {
+    setTargetArticleIdxForFournisseur(articleIdx);
+    setNewFournisseurNom('');
+    setIsAddingFournisseur(true);
+  };
+
+  const handleSaveQuickFournisseur = async (e) => {
+    if (e) e.preventDefault();
+    if (!newFournisseurNom.trim()) return;
+    setSavingFournisseur(true);
+    const { data, error } = await supabase.from('fournisseurs').insert([{ nom: newFournisseurNom.trim() }]).select();
+    if (!error && data && data[0]) {
+      const newF = data[0];
+      setFournisseursList(prev => [...prev, newF].sort((a, b) => a.nom.localeCompare(b.nom)));
+      if (targetArticleIdxForFournisseur !== null) {
+        handleUpdateArticle(targetArticleIdxForFournisseur, 'fournisseur_id', newF.id);
+      }
+      setIsAddingFournisseur(false);
+      setNewFournisseurNom('');
+      setTargetArticleIdxForFournisseur(null);
+    } else if (error) {
+      alert("Erreur lors de la création du fournisseur : " + error.message);
+    }
+    setSavingFournisseur(false);
   };
 
   // ── ARTICLES MANAGEMENT & BIDIRECTIONAL PRICING ─────────────────────
@@ -269,6 +410,17 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
         art.categorie = value;
         const matched = servicesList.find(s => s.nom.toLowerCase() === value.toLowerCase());
         art.service_id = matched?.id || '';
+        
+        // Auto-attempt matching country if switching to Visa
+        if (value.toLowerCase().includes('visa') && !art.visa_country_id && (art.destination || destination)) {
+          const currentDestName = (art.destination || destination).toLowerCase().trim();
+          const matchCountry = visaCountries.find(c => 
+            c.nom.toLowerCase().includes(currentDestName) || currentDestName.includes(c.nom.toLowerCase())
+          );
+          if (matchCountry) {
+            art.visa_country_id = matchCountry.id;
+          }
+        }
       } else if (field === 'prix_achat') {
         art.prix_achat = value;
         const pa = parseFloat(value) || 0;
@@ -299,46 +451,113 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
     });
   };
 
-  // Quick preset helper to auto-fill prices if Visa or Airline is selected
+  // ── VISA CATALOG 2-STEP SELECTION HELPERS ──────────────────────────
+  // Step 1: User selects country
+  const handleVisaCountryChange = (index, countryId) => {
+    const selectedCountry = visaCountries.find(c => c.id === countryId);
+    setArticles(prev => {
+      const updated = [...prev];
+      const art = { ...updated[index] };
+      art.visa_country_id = countryId;
+      art.visa_type_id = ''; // Reset visa type when country changes
+      art.visa_dossier = [];
+      if (selectedCountry) {
+        art.destination = selectedCountry.nom;
+        if (!destination) setDestination(selectedCountry.nom);
+      }
+      updated[index] = art;
+      return updated;
+    });
+  };
+
+  // Step 2: User selects specific Visa Type for that country
   const handleQuickVisaSelect = (index, visaTypeId) => {
     const vt = visaTypes.find(v => v.id === visaTypeId);
     if (vt) {
+      const country = visaCountries.find(c => c.id === vt.country_id);
       const pa = parseFloat(vt.tarif_base) || 0;
       const pv = parseFloat(vt.tarif_vente) || 0;
       const comm = pv - pa;
 
       setArticles(prev => {
         const updated = [...prev];
-        updated[index] = {
-          ...updated[index],
-          designation: `Visa ${vt.nom}`,
-          prix_achat: pa || '',
-          commission: comm || '',
-          prix_vente: pv || ''
-        };
+        const art = { ...updated[index] };
+        
+        const countryLabel = country ? `${country.nom} - ` : '';
+        art.designation = `Visa ${countryLabel}${vt.nom}`;
+        art.prix_achat = pa || '';
+        art.commission = comm || '';
+        art.prix_vente = pv || '';
+        art.visa_country_id = vt.country_id;
+        art.visa_type_id = vt.id;
+        art.visa_dossier = Array.isArray(vt.dossier) ? vt.dossier : [];
+        if (country) {
+          art.destination = country.nom;
+          if (!destination) setDestination(country.nom);
+        }
+        if (vt.duree_traitement && !art.notes) {
+          art.notes = `Délai traitement: ${vt.duree_traitement}`;
+        }
+        
+        updated[index] = art;
         return updated;
       });
     }
   };
 
+  const handleClearVisaCatalogue = (index) => {
+    setArticles(prev => {
+      const updated = [...prev];
+      updated[index] = {
+        ...updated[index],
+        visa_country_id: '',
+        visa_type_id: '',
+        visa_dossier: []
+      };
+      return updated;
+    });
+  };
+
+  // Airline quick link helper
   const handleQuickAirlineSelect = (index, airlineId) => {
     const al = airlines.find(a => a.id === airlineId);
-    if (al) {
-      setArticles(prev => {
-        const updated = [...prev];
-        updated[index] = {
-          ...updated[index],
-          designation: `Vol ${al.nom} (${al.code_iata})`,
-          notes: al.commission ? `Comm. indicative: ${al.commission} DZD` : ''
-        };
-        return updated;
-      });
-    }
+    setArticles(prev => {
+      const updated = [...prev];
+      const current = { ...updated[index] };
+      if (al) {
+        current.airline_id = al.id;
+        current.compagnie_nom = al.nom;
+        if (!current.designation || current.designation.toLowerCase().includes('vol') || current.designation.toLowerCase().includes('billet') || current.designation === 'Prestation Billeterie') {
+          current.designation = `Vol ${al.nom} (${al.code_iata})`;
+        }
+        if (al.commission && !current.commission) {
+          current.commission = al.commission;
+          if (current.prix_achat) {
+            current.prix_vente = (parseFloat(current.prix_achat) || 0) + (parseFloat(al.commission) || 0);
+          }
+        }
+      } else {
+        current.airline_id = '';
+        current.compagnie_nom = '';
+      }
+      updated[index] = current;
+      return updated;
+    });
   };
 
   // ── PASSAGERS (PAX) MANAGEMENT ────────────────────────────────────
   const handleAddPersonne = () => {
-    setPersonnes(prev => [...prev, { nom: '', passport: '' }]);
+    setPersonnes(prev => {
+      if (prev.length === 0) {
+        const clientNom = selectedClient?.nom || clientSearch || 'Client principal';
+        const clientPassport = selectedClient?.passport || '';
+        return [
+          { nom: clientNom, passport: clientPassport },
+          { nom: '', passport: '' }
+        ];
+      }
+      return [...prev, { nom: '', passport: '' }];
+    });
   };
 
   const handleRemovePersonne = (idx) => {
@@ -402,15 +621,27 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
       return;
     }
 
+    const validPersonnes = personnes.filter(p => p.nom && p.nom.trim() !== '');
+    const clientNomToSave = selectedClient?.nom || clientSearch || 'Client';
+    const effectivePassagers = validPersonnes.length > 0 ? validPersonnes : [{ nom: clientNomToSave, passport: '' }];
+    const effectivePaxCount = Math.max(1, validPersonnes.length > 0 ? validPersonnes.length : paxCount);
+
     const destPrefix = destination ? `[🌍 ${destination}] ` : '';
     const summaryDetails = validArticles.map(a => {
       const artDest = a.destination && a.destination !== destination ? ` (${a.destination})` : '';
       return `[${a.categorie}] ${a.designation || 'Prestation'}${artDest}`;
     }).join(' | ');
 
+    const paxNamesList = validPersonnes.length > 0 
+      ? validPersonnes.map(p => p.nom.trim() + (p.passport?.trim() ? ` [${p.passport.trim()}]` : '')).join(', ') 
+      : '';
+    const paxSummary = paxNamesList 
+      ? ` (${effectivePaxCount} Pax: ${paxNamesList})` 
+      : ` (${effectivePaxCount} Pax)`;
+
     const fullDetails = observations.trim() 
-      ? `${destPrefix}${summaryDetails} (${paxCount} Pax) — Remarque: ${observations.trim()}` 
-      : `${destPrefix}${summaryDetails} (${paxCount} Pax)`;
+      ? `${destPrefix}${summaryDetails}${paxSummary} — Remarque: ${observations.trim()}` 
+      : `${destPrefix}${summaryDetails}${paxSummary}`;
 
     const firstArticle = validArticles[0];
     const matchedService = servicesList.find(s => 
@@ -419,40 +650,59 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
     const primaryServiceId = matchedService?.id || (servicesList[0]?.id || null);
     const primaryFournisseurId = firstArticle.fournisseur_id || (fournisseursList[0]?.id || null);
 
-    const cleanArticles = validArticles.map(a => {
+    const cleanArticles = validArticles.map((a, idx) => {
       const pa = parseFloat(a.prix_achat) || 0;
       const pv = parseFloat(a.prix_vente) || 0;
       const comm = parseFloat(a.commission) || (pv - pa);
-      const matched = servicesList.find(s => s.id === a.service_id || s.nom.toLowerCase() === a.categorie.toLowerCase());
+      const matched = servicesList.find(s => s.id === a.service_id || s.nom.toLowerCase() === (a.categorie || '').toLowerCase());
+      const isDbId = a.id && !String(a.id).startsWith('art_');
 
       return {
-        id: a.id,
-        categorie: a.categorie,
+        ...(isDbId ? { id: a.id } : {}),
+        categorie: a.categorie || matched?.nom || 'Prestation',
         service_id: matched?.id || a.service_id || null,
         destination: a.destination || destination || '',
         designation: a.designation.trim() || 'Article',
-        quantite: paxCount,
-        pax_count: paxCount,
+        quantite: effectivePaxCount,
+        pax_count: effectivePaxCount,
+        passagers: effectivePassagers,
+        details_specifiques: {
+          ...(a.details_specifiques || {}),
+          passagers: effectivePassagers
+        },
         prix_achat: pa,
-        prix_achat_unit: paxCount > 0 ? pa / paxCount : pa,
+        prix_achat_unit: effectivePaxCount > 0 ? pa / effectivePaxCount : pa,
         commission: comm,
-        commission_unit: paxCount > 0 ? comm / paxCount : comm,
+        commission_unit: effectivePaxCount > 0 ? comm / effectivePaxCount : comm,
         prix_vente: pv,
-        prix_vente_unit: paxCount > 0 ? pv / paxCount : pv,
+        prix_vente_unit: effectivePaxCount > 0 ? pv / effectivePaxCount : pv,
         total_achat: pa,
         total_vente: pv,
         fournisseur_id: a.fournisseur_id || null,
+        visa_country_id: a.visa_country_id || null,
+        visa_type_id: a.visa_type_id || null,
+        visa_dossier: a.visa_dossier || [],
+        airline_id: a.airline_id || null,
+        compagnie_nom: a.compagnie_nom || null,
+        numero_billet: a.numero_billet || null,
+        pnr: a.pnr || null,
+        itineraire: a.itineraire || null,
+        ordre: idx + 1,
         notes: a.notes || ''
       };
     });
 
-    const clientNomToSave = selectedClient?.nom || clientSearch || 'Client';
+    const clientNomToSaveFinal = selectedClient?.nom || clientSearch || 'Client';
+
+    // Find if any article is linked to a Visa Catalogue type to enrich _visaMeta
+    const visaArticle = cleanArticles.find(a => a.visa_type_id && a.visa_country_id);
+    const primaryVisaType = visaTypes.find(vt => vt.id === visaArticle?.visa_type_id);
 
     const saveData = {
       id: initialData?.id,
       date_vente: dateVente,
       client_id: clientId,
-      client_nom: clientNomToSave,
+      client_nom: clientNomToSaveFinal,
       destination: destination,
       details: fullDetails,
       service_id: primaryServiceId,
@@ -461,9 +711,15 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
       commission: financialTotals.marge,
       total: financialTotals.totalVente,
       etat: etat,
-      articles: cleanArticles,
+      vente_articles: cleanArticles,
+      passagers: effectivePassagers,
       _visaMeta: {
-        passagers: personnes.length > 0 ? personnes : [{ nom: clientNomToSave, passport: '' }]
+        country_id: visaArticle?.visa_country_id || null,
+        visa_type_id: visaArticle?.visa_type_id || null,
+        tarif_base_unit: visaArticle ? (effectivePaxCount > 0 ? (parseFloat(visaArticle.prix_achat) || 0) / effectivePaxCount : parseFloat(visaArticle.prix_achat) || 0) : 0,
+        tarif_vente_unit: visaArticle ? (effectivePaxCount > 0 ? (parseFloat(visaArticle.prix_vente) || 0) / effectivePaxCount : parseFloat(visaArticle.prix_vente) || 0) : 0,
+        dossier: primaryVisaType?.dossier || visaArticle?.visa_dossier || [],
+        passagers: effectivePassagers
       }
     };
 
@@ -472,9 +728,12 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
 
   const filteredClients = clients.filter(c => c.nom.toLowerCase().includes(clientSearch.toLowerCase()));
 
+  // Popular visa countries for quick 1-click selection
+  const popularVisaCountryCodes = ['sa', 'tr', 'ae', 'eg', 'eu', 'gb', 'us', 'qa', 'my', 'tn', 'ma'];
+
   return (
     <Dialog open={true} onOpenChange={onClose}>
-      <DialogContent className="max-w-[1020px] p-0 overflow-hidden rounded-[28px] border border-border/80 shadow-2xl bg-card" onClose={onClose}>
+      <DialogContent className="max-w-[1060px] p-0 overflow-hidden rounded-[28px] border border-border/80 shadow-2xl bg-card" onClose={onClose}>
         
         {/* ── Outer Shell & Header ────────────────────────────────────────── */}
         <div className="bg-gradient-to-r from-slate-950 via-slate-900 to-indigo-950 text-white px-7 py-5 border-b border-white/10 relative overflow-hidden">
@@ -487,7 +746,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                   {initialData ? 'Édition Vente' : 'Transaction Commerciale'}
                 </span>
                 <span className="text-[11px] font-bold text-slate-400">
-                  Tous Services & Destinations
+                  Tous Services & Prestations
                 </span>
               </div>
               <h2 className="text-xl sm:text-2xl font-black tracking-tight text-white flex items-center gap-2.5">
@@ -502,7 +761,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
             <div className="flex items-center gap-2 flex-wrap">
               {destination && (
                 <div className="px-3.5 py-1.5 rounded-xl bg-white/5 border border-white/10 text-center backdrop-blur-md flex items-center gap-1.5">
-                  <CountryFlag countryName={destination} className="w-4 h-3 rounded-xs shadow-2xs" />
+                  <CountryFlag destinationName={destination} className="w-4 h-3 rounded-xs shadow-2xs" />
                   <span className="text-xs font-bold text-white">{destination}</span>
                 </div>
               )}
@@ -525,11 +784,11 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
         {loadingData ? (
           <div className="flex flex-col justify-center items-center h-72 space-y-3 bg-background">
             <Loader2 className="animate-spin text-primary" size={34} />
-            <p className="text-xs text-muted-foreground font-semibold">Chargement des données & services masterdata...</p>
+            <p className="text-xs text-muted-foreground font-semibold">Chargement des données, catalogue visas & fournisseurs...</p>
           </div>
         ) : (
           <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0 bg-background">
-            <div className="p-6 sm:p-7 overflow-y-auto max-h-[66vh] space-y-5">
+            <div className="p-6 sm:p-7 overflow-y-auto max-h-[68vh] space-y-5">
 
               {/* ── ROW 1: CLIENT, DESTINATION, DATE & STATUT ─────────────────── */}
               <div className="p-1 rounded-2xl bg-gradient-to-b from-muted/60 to-muted/20 border border-border/70 shadow-xs">
@@ -600,7 +859,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                     <Label className="text-xs font-bold text-foreground flex items-center justify-between">
                       <span className="flex items-center gap-1.5">
                         <Globe size={13} className="text-blue-500" />
-                        Destination <span className="text-[10px] text-muted-foreground font-normal">(Master Data)</span>
+                        Destination Globale
                       </span>
                       {destination && (
                         <CountryFlag 
@@ -667,7 +926,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                     <div>
                       <h3 className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-2">
                         <Users size={15} className="text-sky-600 dark:text-sky-400" />
-                        <span>Voyageurs & Passagers ({personnes.length} enregistrés · Total {paxCount} Pax)</span>
+                        <span>Voyageurs & Bénéficiaires ({personnes.length} enregistrés · Total {paxCount} Pax)</span>
                       </h3>
                       <p className="text-[11px] text-muted-foreground">
                         Les montants totaux sont divisés par <strong>{paxCount} Pax</strong> pour le calcul unitaire.
@@ -742,10 +1001,10 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                   <div>
                     <h3 className="text-xs font-black uppercase tracking-wider text-foreground flex items-center gap-2">
                       <Layers size={16} className="text-primary" />
-                      <span>Prestations & Articles ({articles.length})</span>
+                      <span>Prestations & Lignes de Vente ({articles.length})</span>
                     </h3>
                     <p className="text-[11px] text-muted-foreground mt-0.5">
-                      Tarifs totaux divisés sur <strong>{paxCount} Pax</strong> · Commission et Tarif Vente synchronisés.
+                      Tarifs synchronisés · Fournisseurs associés · Assistant catalogue visa intégré.
                     </p>
                   </div>
 
@@ -775,7 +1034,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                 </div>
 
                 {/* Articles List Rows */}
-                <div className="space-y-3">
+                <div className="space-y-4">
                   {articles.map((art, idx) => {
                     const pa = parseFloat(art.prix_achat) || 0;
                     const pv = parseFloat(art.prix_vente) || 0;
@@ -788,62 +1047,379 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                     const isVisa = (art.categorie || '').toLowerCase().includes('visa');
                     const isBillet = (art.categorie || '').toLowerCase().includes('billet') || (art.categorie || '').toLowerCase().includes('vol');
 
+                    // Filter visa types for the selected country in this article
+                    const countryVisas = art.visa_country_id 
+                      ? visaTypes.filter(vt => vt.country_id === art.visa_country_id) 
+                      : [];
+                    const selectedCountryObj = visaCountries.find(c => c.id === art.visa_country_id);
+                    const selectedVisaTypeObj = visaTypes.find(vt => vt.id === art.visa_type_id);
+                    const selectedFournisseur = fournisseursList.find(f => f.id === art.fournisseur_id);
+
                     return (
                       <div 
                         key={art.id || idx} 
-                        className="p-1 rounded-2xl bg-gradient-to-b from-muted/70 to-muted/20 border border-border/70 hover:border-primary/40 transition-all duration-200 shadow-xs group"
+                        className={cn(
+                          "p-1 rounded-2xl border transition-all duration-200 shadow-xs group",
+                          isVisa 
+                            ? "bg-gradient-to-b from-emerald-500/10 via-muted/40 to-muted/20 border-emerald-500/30" 
+                            : "bg-gradient-to-b from-muted/70 to-muted/20 border-border/70 hover:border-primary/40"
+                        )}
                       >
-                        <div className="p-3.5 bg-card rounded-[14px] border border-border/40 space-y-3">
+                        <div className="p-4 bg-card rounded-[14px] border border-border/40 space-y-3.5">
                           
-                          {/* Row Top Grid: Category, Description, Achat Total, Commission, Vente Total */}
-                          <div className="grid grid-cols-12 gap-2.5 items-start">
+                          {/* ── ARTICLE HEADER: CATEGORY, FOURNISSEUR & REMOVE ── */}
+                          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2.5 border-b border-border/50">
                             
-                            {/* 1. Category / Master Data Service */}
-                            <div className="col-span-12 sm:col-span-3">
-                              <Label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">
-                                Catégorie #{idx + 1}
-                              </Label>
-                              <Select
-                                value={art.categorie}
-                                onChange={e => handleUpdateArticle(idx, 'categorie', e.target.value)}
-                                className="h-9 text-xs font-extrabold bg-muted/30 rounded-xl"
+                            {/* Left: Category & Line Label */}
+                            <div className="flex items-center gap-2.5 flex-1 min-w-[260px]">
+                              <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded-lg bg-primary/10 text-primary border border-primary/20 shrink-0">
+                                #{idx + 1}
+                              </span>
+                              <div className="flex-1 max-w-[200px]">
+                                <Select
+                                  value={art.categorie}
+                                  onChange={e => handleUpdateArticle(idx, 'categorie', e.target.value)}
+                                  className="h-8 text-xs font-black bg-muted/40 rounded-xl"
+                                >
+                                  {availableCategories.map(cat => (
+                                    <option key={cat.id} value={cat.nom}>
+                                      {cat.emoji} {cat.nom}
+                                    </option>
+                                  ))}
+                                </Select>
+                              </div>
+
+                              {isVisa && (
+                                <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 flex items-center gap-1 shrink-0">
+                                  <Sparkles size={11} /> Catalogue Visa Actif
+                                </span>
+                              )}
+                            </div>
+
+                            {/* Right: Fournisseur UI & Delete Line */}
+                            <div className="flex items-center gap-2 self-end sm:self-auto">
+                              
+                              {/* 🏢 Fournisseur Selector with Quick Add */}
+                              <div className="flex items-center gap-1.5 bg-muted/30 p-1 rounded-xl border border-border/60">
+                                <Building2 size={13} className="text-muted-foreground ml-1.5 shrink-0" />
+                                <Select
+                                  value={art.fournisseur_id || ''}
+                                  onChange={e => handleUpdateArticle(idx, 'fournisseur_id', e.target.value)}
+                                  className="h-7 text-[11px] font-bold bg-transparent border-0 max-w-[170px] min-w-[120px] focus:ring-0"
+                                >
+                                  <option value="">-- Sans Fournisseur --</option>
+                                  {fournisseursList.map(f => (
+                                    <option key={f.id} value={f.id}>{f.nom}</option>
+                                  ))}
+                                </Select>
+
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="icon-xs"
+                                  onClick={() => handleOpenAddFournisseur(idx)}
+                                  title="Ajouter un nouveau fournisseur"
+                                  className="h-6 w-6 rounded-lg text-primary hover:bg-primary/10 shrink-0"
+                                >
+                                  <Plus size={13} />
+                                </Button>
+                              </div>
+
+                              {/* Delete Button */}
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                size="icon-sm"
+                                onClick={() => handleRemoveArticle(idx)}
+                                className="h-7 w-7 text-muted-foreground/60 hover:text-destructive hover:bg-destructive/10 rounded-lg transition-colors ml-1"
+                                title="Supprimer cette ligne"
                               >
-                                {availableCategories.map(cat => (
-                                  <option key={cat.id} value={cat.nom}>
-                                    {cat.emoji} {cat.nom}
-                                  </option>
-                                ))}
-                              </Select>
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          </div>
+
+                          {/* ── SPECIAL STEP-BY-STEP VISA CATALOG SELECTOR (WHEN CATEGORY IS VISA) ── */}
+                          {isVisa && (
+                            <div className="p-3.5 rounded-2xl bg-emerald-50/70 dark:bg-emerald-950/25 border border-emerald-500/25 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2">
+                                  <span className="w-5 h-5 rounded-lg bg-emerald-500 text-white flex items-center justify-center text-xs font-black">
+                                    🛂
+                                  </span>
+                                  <span className="text-xs font-extrabold text-emerald-900 dark:text-emerald-300">
+                                    Sélection Assistée du Visa (Étape 1 : Pays → Étape 2 : Visa)
+                                  </span>
+                                </div>
+                                {art.visa_type_id && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleClearVisaCatalogue(idx)}
+                                    className="text-[10px] font-bold text-muted-foreground hover:text-destructive flex items-center gap-1 transition-colors"
+                                  >
+                                    <RefreshCw size={11} /> Réinitialiser
+                                  </button>
+                                )}
+                              </div>
+
+                              {/* Step 1 & Step 2 Grids */}
+                              <div className="grid grid-cols-1 md:grid-cols-12 gap-3">
+                                
+                                {/* ── ÉTAPE 1 : PAYS DU VISA (OBLIGATOIRE EN PREMIER) ── */}
+                                <div className="md:col-span-6 space-y-1.5">
+                                  <Label className="text-[11px] font-extrabold text-foreground flex items-center justify-between">
+                                    <span className="flex items-center gap-1.5">
+                                      <span className="w-4 h-4 rounded-full bg-emerald-600 text-white text-[10px] flex items-center justify-center font-bold">1</span>
+                                      Pays de Destination <span className="text-red-500">*</span>
+                                    </span>
+                                    {selectedCountryObj && (
+                                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-1">
+                                        <CountryFlag destinationName={selectedCountryObj.nom} className="w-3.5 h-2.5 rounded-2xs" />
+                                        {selectedCountryObj.nom}
+                                      </span>
+                                    )}
+                                  </Label>
+
+                                  <Select
+                                    value={art.visa_country_id || ''}
+                                    onChange={e => handleVisaCountryChange(idx, e.target.value)}
+                                    className="h-9.5 text-xs font-bold bg-background rounded-xl border-emerald-500/40 focus:border-emerald-500"
+                                  >
+                                    <option value="">-- Choisir le pays du visa --</option>
+                                    {visaCountries.map(c => {
+                                      const count = visaTypes.filter(vt => vt.country_id === c.id).length;
+                                      return (
+                                        <option key={c.id} value={c.id}>
+                                          {c.nom} {c.nom_ar ? `(${c.nom_ar})` : ''} — {count} {count > 1 ? 'visas' : 'visa'}
+                                        </option>
+                                      );
+                                    })}
+                                  </Select>
+
+                                  {/* Quick Popular Country Pills */}
+                                  <div className="flex items-center gap-1 flex-wrap pt-0.5">
+                                    <span className="text-[9px] font-bold text-muted-foreground uppercase mr-0.5">Top :</span>
+                                    {visaCountries
+                                      .filter(c => popularVisaCountryCodes.includes((c.code_iso || '').toLowerCase()) || ['sa', 'tr', 'ae', 'eg'].some(k => c.nom.toLowerCase().includes(k)))
+                                      .slice(0, 5)
+                                      .map(c => (
+                                        <button
+                                          key={c.id}
+                                          type="button"
+                                          onClick={() => handleVisaCountryChange(idx, c.id)}
+                                          className={cn(
+                                            "px-2 py-0.5 text-[10px] font-bold rounded-lg border transition-all flex items-center gap-1 shadow-2xs",
+                                            art.visa_country_id === c.id
+                                              ? "bg-emerald-600 text-white border-emerald-600"
+                                              : "bg-background/80 hover:bg-emerald-100 dark:hover:bg-emerald-950/50 text-foreground border-border/70"
+                                          )}
+                                        >
+                                          <CountryFlag destinationName={c.nom} className="w-3 h-2 rounded-2xs" />
+                                          <span>{c.nom.split(' ')[0]}</span>
+                                        </button>
+                                      ))}
+                                  </div>
+                                </div>
+
+                                {/* ── ÉTAPE 2 : TYPE / FORMULE DE VISA POUR CE PAYS ── */}
+                                <div className="md:col-span-6 space-y-1.5">
+                                  <Label className="text-[11px] font-extrabold text-foreground flex items-center justify-between">
+                                    <span className="flex items-center gap-1.5">
+                                      <span className={cn(
+                                        "w-4 h-4 rounded-full text-[10px] flex items-center justify-center font-bold",
+                                        art.visa_country_id ? "bg-emerald-600 text-white" : "bg-muted text-muted-foreground"
+                                      )}>2</span>
+                                      Formule de Visa <span className="text-red-500">*</span>
+                                    </span>
+                                    {art.visa_type_id && (
+                                      <span className="text-[10px] font-bold text-emerald-600 dark:text-emerald-400">
+                                        ✓ Tarif injecté
+                                      </span>
+                                    )}
+                                  </Label>
+
+                                  {!art.visa_country_id ? (
+                                    <div className="h-9.5 px-3 rounded-xl bg-muted/40 border border-dashed border-border/80 flex items-center gap-2 text-xs text-muted-foreground italic">
+                                      <AlertCircle size={13} className="text-amber-500 shrink-0" />
+                                      <span>Sélectionnez d'abord le pays (Étape 1)</span>
+                                    </div>
+                                  ) : countryVisas.length === 0 ? (
+                                    <div className="h-9.5 px-3 rounded-xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800/40 flex items-center justify-between text-xs text-amber-800 dark:text-amber-300">
+                                      <span>Aucun visa pré-enregistré pour ce pays.</span>
+                                      <span className="text-[10px] font-bold">Saisie manuelle possible</span>
+                                    </div>
+                                  ) : (
+                                    <Select
+                                      value={art.visa_type_id || ''}
+                                      onChange={e => handleQuickVisaSelect(idx, e.target.value)}
+                                      className="h-9.5 text-xs font-black bg-background rounded-xl border-emerald-500/50 text-emerald-950 dark:text-emerald-100 shadow-xs focus:border-emerald-500"
+                                    >
+                                      <option value="">-- Sélectionner la formule de visa --</option>
+                                      {countryVisas.map(vt => (
+                                        <option key={vt.id} value={vt.id}>
+                                          {vt.nom} — Vente: {Number(vt.tarif_vente || 0).toLocaleString('fr-DZ')} DZD {vt.duree_traitement ? `(${vt.duree_traitement})` : ''}
+                                        </option>
+                                      ))}
+                                    </Select>
+                                  )}
+
+                                  {/* Info Pill on selected Visa */}
+                                  {selectedVisaTypeObj && (
+                                    <div className="flex items-center gap-2 text-[10px] font-bold text-muted-foreground pt-0.5 flex-wrap">
+                                      {selectedVisaTypeObj.duree_traitement && (
+                                        <span className="flex items-center gap-1 bg-background/80 px-2 py-0.5 rounded-md border border-border/60">
+                                          <Clock size={10} className="text-teal-600" />
+                                          <span>Délai: {selectedVisaTypeObj.duree_traitement}</span>
+                                        </span>
+                                      )}
+                                      {Array.isArray(selectedVisaTypeObj.dossier) && selectedVisaTypeObj.dossier.length > 0 && (
+                                        <span className="flex items-center gap-1 bg-background/80 px-2 py-0.5 rounded-md border border-border/60">
+                                          <FileCheck size={10} className="text-emerald-600" />
+                                          <span>Dossier: {selectedVisaTypeObj.dossier.length} pièces</span>
+                                        </span>
+                                      )}
+                                      <span className="text-emerald-600 dark:text-emerald-400 font-extrabold">
+                                        Marge: +{(Number(selectedVisaTypeObj.tarif_vente || 0) - Number(selectedVisaTypeObj.tarif_base || 0)).toLocaleString('fr-DZ')} DZD
+                                      </span>
+                                    </div>
+                                  )}
+                                </div>
+
+                              </div>
+                            </div>
+                          )}
+
+                          {/* ── ROW: DESCRIPTION & BILLETTERIE FIELDS ── */}
+                          <div className="space-y-2.5">
+                            <div className="grid grid-cols-12 gap-3 items-start">
+                              
+                              {/* Description Input */}
+                              <div className={cn(isBillet ? "col-span-12 sm:col-span-7" : "col-span-12")}>
+                                <Label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">
+                                  Libellé / Désignation de la prestation
+                                </Label>
+                                <Input
+                                  placeholder={
+                                    isBillet ? 'Ex: Vol Alger - Paris CDG A/R' :
+                                    isVisa ? 'Ex: Visa Tourisme 90 jours' :
+                                    art.categorie.toLowerCase().includes('hotel') ? 'Ex: Hôtel Hilton 4* 5 nuits' :
+                                    art.categorie.toLowerCase().includes('transfert') ? 'Ex: Navette Privée Aéroport' :
+                                    `Ex: Prestation ${art.categorie}`
+                                  }
+                                  value={art.designation}
+                                  onChange={e => handleUpdateArticle(idx, 'designation', e.target.value)}
+                                  className="h-9.5 text-xs font-semibold bg-background rounded-xl focus-visible:bg-transparent"
+                                />
+                              </div>
+
+                              {/* Quick Airline Selector (If category is Billeterie) */}
+                              {isBillet && (
+                                <div className="col-span-12 sm:col-span-5">
+                                  <Label className="text-[10px] font-bold text-sky-600 dark:text-sky-400 uppercase block mb-1 flex items-center justify-between">
+                                    <span>✈️ Compagnie Aérienne</span>
+                                    {art.airline_id && <span className="text-[9px] text-emerald-600 font-bold">✓ Liée</span>}
+                                  </Label>
+                                  <Select
+                                    value={art.airline_id || ''}
+                                    onChange={e => handleQuickAirlineSelect(idx, e.target.value)}
+                                    className="h-9.5 text-[11px] font-bold bg-sky-50/70 dark:bg-sky-950/40 text-sky-950 dark:text-sky-200 border-sky-300 dark:border-sky-800 rounded-xl"
+                                  >
+                                    <option value="">-- Choisir une compagnie --</option>
+                                    {airlines.map(al => (
+                                      <option key={al.id} value={al.id}>{al.code_iata} - {al.nom}</option>
+                                    ))}
+                                  </Select>
+                                </div>
+                              )}
+
                             </div>
 
-                            {/* 2. Designation / Description */}
-                            <div className="col-span-12 sm:col-span-3">
-                              <Label className="text-[10px] font-bold text-muted-foreground uppercase block mb-1">
-                                Description
-                              </Label>
-                              <Input
-                                placeholder={
-                                  isBillet ? 'Ex: Vol Alger - Paris A/R' :
-                                  isVisa ? 'Ex: Visa Tourisme 90j' :
-                                  art.categorie.toLowerCase().includes('hotel') ? 'Ex: Hôtel 4* 5 nuits' :
-                                  art.categorie.toLowerCase().includes('transfert') ? 'Ex: Navette Aéroport' :
-                                  `Ex: Prestation ${art.categorie}`
-                                }
-                                value={art.designation}
-                                onChange={e => handleUpdateArticle(idx, 'designation', e.target.value)}
-                                className="h-9 text-xs font-semibold bg-background rounded-xl focus-visible:bg-transparent"
-                              />
-                            </div>
+                            {/* Additional Billetterie details: Destination, Itinéraire, PNR, N° Billet */}
+                            {isBillet && (
+                              <div className="grid grid-cols-1 sm:grid-cols-12 gap-2.5 p-3 bg-sky-50/50 dark:bg-sky-950/25 border border-sky-200/70 dark:border-sky-800/50 rounded-2xl shadow-2xs">
+                                
+                                {/* 1. Destination du Billet / Vol */}
+                                <div className="sm:col-span-3 space-y-1">
+                                  <Label className="text-[10px] font-extrabold text-sky-900 dark:text-sky-300 uppercase flex items-center justify-between">
+                                    <span className="flex items-center gap-1">
+                                      <Globe size={11} className="text-sky-600" /> Destination
+                                    </span>
+                                    {art.destination && (
+                                      <CountryFlag destinationName={art.destination} className="w-3.5 h-2.5 rounded-2xs" />
+                                    )}
+                                  </Label>
+                                  <DestinationSelect
+                                    value={art.destination || destination || ''}
+                                    onChange={(val) => {
+                                      const newDest = val === 'all' ? '' : val;
+                                      handleUpdateArticle(idx, 'destination', newDest);
+                                      if (!destination && newDest) setDestination(newDest);
+                                    }}
+                                    destinations={destinationsList}
+                                    placeholder="Destination du vol..."
+                                    allowAll={false}
+                                    size="sm"
+                                    mode="name"
+                                    showArabic={false}
+                                    className="w-full bg-background rounded-lg border-sky-300/80 dark:border-sky-800 text-xs font-bold"
+                                  />
+                                </div>
 
-                            {/* 3. Tarif Achat Total (DZD) */}
-                            <div className="col-span-4 sm:col-span-2">
-                              <div className="flex items-center justify-between mb-1">
-                                <Label className="text-[10px] font-bold text-muted-foreground uppercase block">
-                                  Achat Total
+                                {/* 2. Itinéraire / Trajet */}
+                                <div className="sm:col-span-3 space-y-1">
+                                  <Label className="text-[10px] font-extrabold text-sky-900 dark:text-sky-300 uppercase block">
+                                    Itinéraire / Trajet
+                                  </Label>
+                                  <Input
+                                    placeholder="Ex: ALG - IST - ALG"
+                                    value={art.itineraire || ''}
+                                    onChange={e => handleUpdateArticle(idx, 'itineraire', e.target.value)}
+                                    className="h-9 text-xs bg-background rounded-lg border-sky-300/80 dark:border-sky-800 font-semibold"
+                                  />
+                                </div>
+
+                                {/* 3. PNR / Code Réservation */}
+                                <div className="sm:col-span-3 space-y-1">
+                                  <Label className="text-[10px] font-extrabold text-sky-900 dark:text-sky-300 uppercase block">
+                                    PNR / Code Réservation
+                                  </Label>
+                                  <Input
+                                    placeholder="Ex: 6YTR9Q"
+                                    value={art.pnr || ''}
+                                    onChange={e => handleUpdateArticle(idx, 'pnr', e.target.value.toUpperCase())}
+                                    className="h-9 text-xs font-mono font-black uppercase bg-background rounded-lg border-sky-300/80 dark:border-sky-800 tracking-wider"
+                                  />
+                                </div>
+
+                                {/* 4. Numéro de Billet (e-Ticket) */}
+                                <div className="sm:col-span-3 space-y-1">
+                                  <Label className="text-[10px] font-extrabold text-sky-900 dark:text-sky-300 uppercase block">
+                                    Numéro de Billet (e-Ticket)
+                                  </Label>
+                                  <Input
+                                    placeholder="Ex: 065-2458963214"
+                                    value={art.numero_billet || ''}
+                                    onChange={e => handleUpdateArticle(idx, 'numero_billet', e.target.value)}
+                                    className="h-9 text-xs font-mono bg-background rounded-lg border-sky-300/80 dark:border-sky-800"
+                                  />
+                                </div>
+
+                              </div>
+                            )}
+                          </div>
+
+                          {/* ── ROW: FINANCIAL FIELDS (ACHAT TOTAL, COMMISSION, VENTE TOTAL) ── */}
+                          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-1">
+                            
+                            {/* 1. Tarif Achat Total (DZD) */}
+                            <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 space-y-1">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-[10px] font-bold text-slate-600 dark:text-slate-400 uppercase block">
+                                  Achat Total (DZD)
                                 </Label>
                                 {paxCount > 1 && pa > 0 && (
                                   <span className="text-[9px] font-bold text-slate-500">
-                                    {paPax.toLocaleString('fr-DZ')}/pax
+                                    {paPax.toLocaleString('fr-DZ')} / pax
                                   </span>
                                 )}
                               </div>
@@ -852,19 +1428,19 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                                 placeholder="0"
                                 value={art.prix_achat}
                                 onChange={e => handleUpdateArticle(idx, 'prix_achat', e.target.value)}
-                                className="h-9 text-xs font-bold text-slate-700 dark:text-slate-300 bg-background rounded-xl"
+                                className="h-9 text-xs font-bold text-slate-800 dark:text-slate-200 bg-background rounded-lg"
                               />
                             </div>
 
-                            {/* 4. Commission / Marge (Modifiable !) */}
-                            <div className="col-span-4 sm:col-span-2">
-                              <div className="flex items-center justify-between mb-1">
-                                <Label className="text-[10px] font-extrabold text-amber-600 dark:text-amber-400 uppercase block">
-                                  Commission
+                            {/* 2. Commission / Marge (Modifiable) */}
+                            <div className="p-2.5 rounded-xl bg-amber-50/50 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-800/50 space-y-1">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-[10px] font-extrabold text-amber-700 dark:text-amber-400 uppercase block">
+                                  Commission / Marge (DZD)
                                 </Label>
                                 {paxCount > 1 && comm !== 0 && (
                                   <span className="text-[9px] font-bold text-amber-600 dark:text-amber-400">
-                                    {commPax.toLocaleString('fr-DZ')}/pax
+                                    {commPax.toLocaleString('fr-DZ')} / pax
                                   </span>
                                 )}
                               </div>
@@ -873,19 +1449,19 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                                 placeholder="0"
                                 value={art.commission}
                                 onChange={e => handleUpdateArticle(idx, 'commission', e.target.value)}
-                                className="h-9 text-xs font-extrabold text-amber-700 dark:text-amber-400 bg-amber-50/50 dark:bg-amber-950/20 border-amber-300 dark:border-amber-700/50 rounded-xl"
+                                className="h-9 text-xs font-extrabold text-amber-700 dark:text-amber-400 bg-background rounded-lg border-amber-300"
                               />
                             </div>
 
-                            {/* 5. Tarif Vente Total (Modifiable !) */}
-                            <div className="col-span-4 sm:col-span-2">
-                              <div className="flex items-center justify-between mb-1">
-                                <Label className="text-[10px] font-black text-primary uppercase block">
-                                  Vente Total
+                            {/* 3. Tarif Vente Total (Modifiable) */}
+                            <div className="p-2.5 rounded-xl bg-emerald-50/50 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-800/50 space-y-1">
+                              <div className="flex items-center justify-between">
+                                <Label className="text-[10px] font-black text-emerald-700 dark:text-emerald-400 uppercase block">
+                                  Vente Total TTC (DZD)
                                 </Label>
                                 {paxCount > 1 && pv > 0 && (
                                   <span className="text-[9px] font-black text-emerald-600 dark:text-emerald-400">
-                                    {pvPax.toLocaleString('fr-DZ')}/pax
+                                    {pvPax.toLocaleString('fr-DZ')} / pax
                                   </span>
                                 )}
                               </div>
@@ -894,57 +1470,34 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                                 placeholder="0"
                                 value={art.prix_vente}
                                 onChange={e => handleUpdateArticle(idx, 'prix_vente', e.target.value)}
-                                className="h-9 text-xs font-black text-primary bg-primary/5 border-primary/30 rounded-xl"
+                                className="h-9 text-xs font-black text-emerald-700 dark:text-emerald-300 bg-background rounded-lg border-emerald-300"
                               />
                             </div>
+
                           </div>
 
-                          {/* Line Bottom Meta: Supplier, Quick Catalogs, Per Pax Pills, Delete */}
-                          <div className="flex items-center justify-between pt-2 border-t border-border/50 text-xs flex-wrap gap-2">
+                          {/* Line Bottom Meta: Indicators & Notes */}
+                          <div className="flex items-center justify-between pt-2 border-t border-border/40 text-xs flex-wrap gap-2">
                             
-                            {/* Supplier & Quick Links */}
-                            <div className="flex items-center gap-2 flex-1 min-w-[220px]">
-                              <span className="text-[10px] font-bold text-muted-foreground">Fournisseur :</span>
-                              <Select
-                                value={art.fournisseur_id || ''}
-                                onChange={e => handleUpdateArticle(idx, 'fournisseur_id', e.target.value)}
-                                className="h-7 text-[11px] bg-muted/40 max-w-[170px] rounded-lg"
-                              >
-                                <option value="">-- Par défaut --</option>
-                                {fournisseursList.map(f => (
-                                  <option key={f.id} value={f.id}>{f.nom}</option>
-                                ))}
-                              </Select>
-
-                              {/* Quick Visa Link Helper */}
-                              {isVisa && visaTypes.length > 0 && (
-                                <Select
-                                  onChange={e => handleQuickVisaSelect(idx, e.target.value)}
-                                  className="h-7 text-[10px] bg-emerald-50 text-emerald-800 border-emerald-300 rounded-lg max-w-[160px]"
-                                >
-                                  <option value="">⚡ Catalogue Visa</option>
-                                  {visaTypes.map(vt => (
-                                    <option key={vt.id} value={vt.id}>{vt.nom} ({Number(vt.tarif_vente||0).toLocaleString('fr-DZ')} DZD)</option>
-                                  ))}
-                                </Select>
+                            <div className="flex items-center gap-2 text-[11px] text-muted-foreground flex-wrap">
+                              {selectedFournisseur ? (
+                                <span className="flex items-center gap-1 font-bold text-foreground bg-muted/60 px-2 py-0.5 rounded-md">
+                                  <Building2 size={11} className="text-primary" />
+                                  <span>Fournisseur: {selectedFournisseur.nom}</span>
+                                </span>
+                              ) : (
+                                <span className="italic text-[10px]">Aucun fournisseur assigné</span>
                               )}
 
-                              {/* Quick Airline Link Helper */}
-                              {isBillet && airlines.length > 0 && (
-                                <Select
-                                  onChange={e => handleQuickAirlineSelect(idx, e.target.value)}
-                                  className="h-7 text-[10px] bg-sky-50 text-sky-800 border-sky-300 rounded-lg max-w-[150px]"
-                                >
-                                  <option value="">⚡ Compagnie Aérienne</option>
-                                  {airlines.map(al => (
-                                    <option key={al.id} value={al.id}>{al.code_iata} - {al.nom}</option>
-                                  ))}
-                                </Select>
+                              {art.destination && (
+                                <span className="flex items-center gap-1 text-[10px] font-bold bg-muted/50 px-2 py-0.5 rounded-md">
+                                  <CountryFlag destinationName={art.destination} className="w-3.5 h-2.5 rounded-2xs" />
+                                  <span>{art.destination}</span>
+                                </span>
                               )}
                             </div>
 
-                            {/* Line Financial Indicators with Per-Pax Breakdown */}
-                            <div className="flex items-center gap-3">
+                            <div className="flex items-center gap-2.5">
                               {paxCount > 1 && (
                                 <span className="text-[10px] font-bold bg-muted/70 text-foreground px-2 py-0.5 rounded-lg border border-border/70">
                                   {paxCount} Pax : {pvPax.toLocaleString('fr-DZ')} DZD / pax
@@ -959,17 +1512,9 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                               )}>
                                 Marge : {comm >= 0 ? '+' : ''}{comm.toLocaleString('fr-DZ')} DZD
                               </span>
-
-                              <button
-                                type="button"
-                                onClick={() => handleRemoveArticle(idx)}
-                                className="text-muted-foreground/60 hover:text-destructive p-1 rounded-lg hover:bg-destructive/10 transition-colors ml-1"
-                                title="Supprimer cet article"
-                              >
-                                <Trash2 size={14} />
-                              </button>
                             </div>
                           </div>
+
                         </div>
                       </div>
                     );
@@ -983,7 +1528,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
                   className="w-full py-2.5 rounded-2xl border border-dashed border-primary/40 bg-primary/5 hover:bg-primary/10 text-primary font-extrabold text-xs flex items-center justify-center gap-2 transition-all duration-200 shadow-2xs active:scale-[0.99]"
                 >
                   <Plus size={15} />
-                  <span>Ajouter une ligne de prestation</span>
+                  <span>Ajouter une autre prestation à cette vente</span>
                 </button>
               </div>
 
@@ -991,7 +1536,7 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
               <div className="space-y-1.5">
                 <Label className="text-xs font-bold text-foreground">Remarques & Modalités Spécifiques (Optionnel)</Label>
                 <Input
-                  placeholder="Ex: Bagage 23kg inclus, confirmation immédiate reçue par email..."
+                  placeholder="Ex: Bagage 23kg inclus, voucher transmis par email, règlement par virement..."
                   value={observations}
                   onChange={e => setObservations(e.target.value)}
                   className="h-10 text-xs bg-muted/20 rounded-xl border-border/80"
@@ -1107,9 +1652,65 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
           </form>
         )}
       </DialogContent>
-      {isAddingClient && <ClientForm onClose={() => setIsAddingClient(false)} onSave={handleSaveNewClient} />}
+
+      {/* ── Quick Add Client Dialog ── */}
+      {isAddingClient && (
+        <ClientForm 
+          onClose={() => setIsAddingClient(false)} 
+          onSave={handleSaveNewClient} 
+        />
+      )}
+
+      {/* ── Quick Add Fournisseur Dialog ── */}
+      {isAddingFournisseur && (
+        <Dialog open={true} onOpenChange={() => setIsAddingFournisseur(false)}>
+          <DialogContent className="max-w-md p-6 rounded-3xl" onClose={() => setIsAddingFournisseur(false)}>
+            <DialogHeader>
+              <DialogTitle className="text-base font-black flex items-center gap-2">
+                <div className="w-8 h-8 rounded-xl bg-primary/10 text-primary flex items-center justify-center">
+                  <Building2 size={16} />
+                </div>
+                <span>Nouveau Fournisseur / Prestataire</span>
+              </DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleSaveQuickFournisseur} className="space-y-4 pt-2">
+              <div className="space-y-1.5">
+                <Label className="text-xs font-bold">Nom de l'entreprise / Partenaire <span className="text-red-500">*</span></Label>
+                <Input
+                  placeholder="Ex: Al Tayyar Travel, Royal Airlines, Booking Pro..."
+                  value={newFournisseurNom}
+                  onChange={e => setNewFournisseurNom(e.target.value)}
+                  required
+                  autoFocus
+                  className="h-10 text-xs font-bold rounded-xl"
+                />
+              </div>
+              <DialogFooter className="gap-2 pt-2">
+                <Button 
+                  type="button" 
+                  variant="outline" 
+                  size="sm" 
+                  onClick={() => setIsAddingFournisseur(false)}
+                  className="rounded-xl h-9"
+                >
+                  Annuler
+                </Button>
+                <Button 
+                  type="submit" 
+                  size="sm" 
+                  disabled={savingFournisseur || !newFournisseurNom.trim()}
+                  className="rounded-xl h-9 font-bold"
+                >
+                  {savingFournisseur ? <Loader2 className="animate-spin" size={14} /> : 'Créer & Assigner'}
+                </Button>
+              </DialogFooter>
+            </form>
+          </DialogContent>
+        </Dialog>
+      )}
     </Dialog>
   );
 };
 
 export default VenteForm;
+

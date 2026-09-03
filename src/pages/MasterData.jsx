@@ -1536,10 +1536,21 @@ const VisaCatalogueSettings = () => {
   };
 
   const handleRemoveCountry = async (id) => {
-    if (window.confirm("Êtes-vous sûr ? Tous les visas liés seront supprimés.")) {
-      await supabase.from('visa_countries').delete().eq('id', id);
-      setCountries(countries.filter(c => c.id !== id));
-      setVisaTypes(visaTypes.filter(v => v.country_id !== id));
+    if (window.confirm("Êtes-vous sûr ? Tous les visas liés à ce pays seront également supprimés.")) {
+      try {
+        const { error: typesErr } = await supabase.from('visa_types').delete().eq('country_id', id);
+        if (typesErr) console.warn("Erreur suppression types de visa:", typesErr);
+
+        const { error } = await supabase.from('visa_countries').delete().eq('id', id);
+        if (error) {
+          alert("Erreur lors de la suppression du pays : " + error.message);
+          return;
+        }
+        setCountries(countries.filter(c => c.id !== id));
+        setVisaTypes(visaTypes.filter(v => v.country_id !== id));
+      } catch (err) {
+        alert("Erreur inattendue : " + (err.message || err));
+      }
     }
   };
 
@@ -1590,9 +1601,17 @@ const VisaCatalogueSettings = () => {
   };
 
   const handleRemoveVisa = async (id) => {
-    if (window.confirm("Supprimer ce visa ?")) {
-      await supabase.from('visa_types').delete().eq('id', id);
-      setVisaTypes(visaTypes.filter(v => v.id !== id));
+    if (window.confirm("Êtes-vous sûr de vouloir supprimer ce visa ?")) {
+      try {
+        const { error } = await supabase.from('visa_types').delete().eq('id', id);
+        if (error) {
+          alert("Erreur lors de la suppression du visa : " + error.message);
+          return;
+        }
+        setVisaTypes(visaTypes.filter(v => v.id !== id));
+      } catch (err) {
+        alert("Erreur inattendue : " + (err.message || err));
+      }
     }
   };
 
