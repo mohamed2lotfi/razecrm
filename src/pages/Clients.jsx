@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Users, Trash2, Loader2, Pencil, Search, ChevronLeft, ChevronRight, MessageSquare, FolderOpen } from 'lucide-react';
+import { Plus, Users, Trash2, Loader2, Pencil, Search, ChevronLeft, ChevronRight, MessageSquare, FolderOpen, Sparkles } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -174,7 +174,7 @@ const Clients = () => {
                   </td>
                 </tr>
               ) : clients.map(c => (
-                <tr key={c.id} className="border-b last:border-0 hover:bg-muted/30 transition-colors">
+                <tr key={c.id} className="border-b last:border-0 hover:bg-muted/40 transition-colors group">
                   <td className="px-4 py-3">
                     <Badge variant={c.type === 'Entreprise' ? 'warning' : 'success'} className="text-[10px]">
                       {c.type || 'Particulier'}
@@ -190,7 +190,15 @@ const Clients = () => {
                       );
                     })()}
                   </td>
-                  <td className="px-4 py-3 font-medium">{c.nom}</td>
+                  <td className="px-4 py-3 font-medium">
+                    <button 
+                      type="button" 
+                      onClick={() => setSelectedClientForDossier(c)}
+                      className="font-semibold text-slate-800 hover:text-primary transition-colors text-left flex items-center gap-1.5 group-hover:underline"
+                    >
+                      {c.nom}
+                    </button>
+                  </td>
                   <td className="px-4 py-3 text-muted-foreground">{c.email || '—'}</td>
                   <td className="px-4 py-3 text-muted-foreground">{c.telephone || '—'}</td>
                   <td className="px-4 py-3 text-right">
@@ -199,19 +207,19 @@ const Clients = () => {
                         variant="outline" 
                         size="sm" 
                         onClick={() => setSelectedClientForDossier(c)}
-                        className="gap-1.5 bg-blue-50 hover:bg-blue-100 hover:text-blue-800 hover:border-blue-300 text-xs text-blue-800 font-bold transition-colors shadow-2xs"
-                        title="Consulter le dossier client (Ventes, Inscriptions Omra, Devis et Remarques)"
+                        className="gap-1.5 bg-gradient-to-r from-emerald-50 to-teal-50 hover:from-emerald-100 hover:to-teal-100 hover:text-emerald-900 border-emerald-200/80 text-xs text-emerald-800 font-bold transition-all shadow-2xs hover:shadow-xs"
+                        title="Consulter la Fiche Client 360° (Achats, Omra, Devis, Chronologie, Relevé et Notes)"
                       >
-                        <FolderOpen size={13} className="text-blue-600" /> Dossier
+                        <Sparkles size={13} className="text-emerald-600 animate-pulse" /> Fiche 360°
                       </Button>
                       <Button 
                         variant="outline" 
                         size="sm" 
                         onClick={() => setSelectedClientForRemarques(c)}
-                        className="gap-1.5 bg-slate-50 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 text-xs text-slate-700 transition-colors"
+                        className="gap-1.5 bg-slate-50 hover:bg-amber-50 hover:text-amber-800 hover:border-amber-300 text-xs text-slate-700 transition-colors"
                         title="Consulter et ajouter des remarques d'équipe sur ce client"
                       >
-                        <MessageSquare size={13} className="text-emerald-600" /> Remarques
+                        <MessageSquare size={13} className="text-amber-600" /> Remarques
                       </Button>
                       <Button variant="outline" size="sm" onClick={() => { setEditingClient(c); setIsFormOpen(true); }}>
                         <Pencil size={14} /> Modifier
