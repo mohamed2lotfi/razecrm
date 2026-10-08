@@ -41,7 +41,7 @@ export default function VenteRemboursementModal({
   onClose, 
   onSuccess 
 }) {
-  const { user } = useAuth();
+  const { user, profile } = useAuth();
   
   const [dateRemboursement, setDateRemboursement] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [penaliteFournisseur, setPenaliteFournisseur] = useState('0');
@@ -277,7 +277,9 @@ export default function VenteRemboursementModal({
             montant_dzd: -montantRembourseClient,
             moyen_paiement: moyenPaiement,
             num_recu: numRecu,
-            notes: `Remboursement Client (Pénalité Fournisseur: ${fmtDZD(numPenFournisseur)}, Pénalité Agence: ${fmtDZD(numPenAgence)})`
+            notes: `Remboursement Client (Pénalité Fournisseur: ${fmtDZD(numPenFournisseur)}, Pénalité Agence: ${fmtDZD(numPenAgence)})`,
+            created_by: user?.id || null,
+            created_by_name: profile?.nom || user?.email?.split('@')[0] || 'Admin'
           });
       }
 

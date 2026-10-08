@@ -3,8 +3,8 @@ import {
   Plus, CreditCard, FileText, FileDown, Trash2, TrendingUp, BarChart3, 
   Coins, ClipboardList, Loader2, Pencil, Search, ChevronLeft, ChevronRight, 
   ChevronsLeft, ChevronsRight,
-  Eye, Layers, Globe, Building2, Wallet, AlertCircle, Sparkles, DollarSign,
-  RotateCcw
+  Eye, Layers, Building2, Wallet, AlertCircle, User,
+  RotateCcw, ArrowUpDown, ArrowUp, ArrowDown, SlidersHorizontal, X
 } from 'lucide-react';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
@@ -18,7 +18,7 @@ import FactureForm from '@/components/FactureForm';
 import VentePaiementsModal from '@/components/VentePaiementsModal';
 import VenteRemboursementModal from '@/components/VenteRemboursementModal';
 import CountryFlag from '@/components/CountryFlag';
-import { format, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, startOfYear, endOfYear, startOfDay, endOfDay, isWithinInterval } from 'date-fns';
+import { format, parseISO, startOfMonth, endOfMonth, startOfWeek, endOfWeek, startOfYear, endOfYear, startOfDay, endOfDay } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -27,17 +27,31 @@ import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
 const Ventes = () => {
-  const { isAdmin } = useAuth();
+  const { isAdmin, user, profile } = useAuth();
   const [ventes, setVentes] = useState([]);
   const [servicesList, setServicesList] = useState([]);
   const [fournisseursList, setFournisseursList] = useState([]);
+  const [profilesList, setProfilesList] = useState([]);
   const [loading, setLoading] = useState(true);
 
   // Paiements Data State
   const [paiementsMap, setPaiementsMap] = useState({});
   const [activePaymentVente, setActivePaymentVente] = useState(null);
   const [activeRefundVente, setActiveRefundVente] = useState(null);
+
+  // Filters State
   const [filterPaymentStatut, setFilterPaymentStatut] = useState('all');
+  const [filterFournisseur, setFilterFournisseur] = useState('all');
+  const [filterService, setFilterService] = useState('all');
+  const [filterAgent, setFilterAgent] = useState('all');
+  const [filterPeriode, setFilterPeriode] = useState('all');
+  const [customDateDebut, setCustomDateDebut] = useState('');
+  const [customDateFin, setCustomDateFin] = useState('');
+  const [showAdvancedFilters, setShowAdvancedFilters] = useState(false);
+
+  // Sorting State
+  const [sortBy, setSortBy] = useState('date_vente'); // 'date_vente' | 'total' | 'client_nom' | 'commission' | 'etat'
+  const [sortOrder, setSortOrder] = useState('desc'); // 'desc' | 'asc'
 
   // Stats State
   const [stats, setStats] = useState({ 
@@ -87,15 +101,66 @@ const Ventes = () => {
 
   useEffect(() => {
     fetchVentesPage();
-  }, [currentPage, debouncedSearch, filterPaymentStatut, itemsPerPage]);
+  }, [
+    currentPage, 
+    debouncedSearch, 
+    filterPaymentStatut, 
+    filterFournisseur, 
+    filterService, 
+    filterAgent,
+    filterPeriode, 
+    customDateDebut, 
+    customDateFin, 
+    sortBy, 
+    sortOrder, 
+    itemsPerPage
+  ]);
+
+  const activeFiltersCount = useMemo(() => {
+    let count = 0;
+    if (searchQuery) count++;
+    if (filterPaymentStatut !== 'all') count++;
+    if (filterFournisseur !== 'all') count++;
+    if (filterService !== 'all') count++;
+    if (filterAgent !== 'all') count++;
+    if (filterPeriode !== 'all') count++;
+    return count;
+  }, [searchQuery, filterPaymentStatut, filterFournisseur, filterService, filterAgent, filterPeriode]);
+
+  const handleResetFilters = () => {
+    setSearchQuery('');
+    setDebouncedSearch('');
+    setFilterPaymentStatut('all');
+    setFilterFournisseur('all');
+    setFilterService('all');
+    setFilterAgent('all');
+    setFilterPeriode('all');
+    setCustomDateDebut('');
+    setCustomDateFin('');
+    setSortBy('date_vente');
+    setSortOrder('desc');
+    setCurrentPage(1);
+  };
+
+  const handleSort = (column) => {
+    if (sortBy === column) {
+      setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(column);
+      setSortOrder(column === 'client_nom' ? 'asc' : 'desc');
+    }
+    setCurrentPage(1);
+  };
 
   const fetchMetadata = async () => {
-    const [sRes, fRes] = await Promise.all([
-      supabase.from('services').select('*'),
-      supabase.from('fournisseurs').select('*')
+    const [sRes, fRes, pRes] = await Promise.all([
+      supabase.from('services').select('*').order('nom'),
+      supabase.from('fournisseurs').select('*').order('nom'),
+      supabase.from('profiles').select('id, nom, email, role').order('nom')
     ]);
     if (sRes.data) setServicesList(sRes.data);
     if (fRes.data) setFournisseursList(fRes.data);
+    if (pRes.data) setProfilesList(pRes.data);
   };
 
   const fetchStats = async () => {
@@ -141,25 +206,88 @@ const Ventes = () => {
       query = query.eq('etat', filterPaymentStatut);
     }
 
+    if (filterFournisseur && filterFournisseur !== 'all') {
+      query = query.eq('fournisseur_id', filterFournisseur);
+    }
+
+    if (filterService && filterService !== 'all') {
+      query = query.eq('service_id', filterService);
+    }
+
+    if (filterAgent && filterAgent !== 'all') {
+      query = query.eq('created_by', filterAgent);
+    }
+
+    // Période / Dates
+    const now = new Date();
+    let startDate = null;
+    let endDate = null;
+
+    if (filterPeriode === 'today') {
+      startDate = startOfDay(now).toISOString();
+      endDate = endOfDay(now).toISOString();
+    } else if (filterPeriode === 'this_week') {
+      startDate = startOfWeek(now, { weekStartsOn: 1 }).toISOString();
+      endDate = endOfWeek(now, { weekStartsOn: 1 }).toISOString();
+    } else if (filterPeriode === 'this_month') {
+      startDate = startOfMonth(now).toISOString();
+      endDate = endOfMonth(now).toISOString();
+    } else if (filterPeriode === 'this_year') {
+      startDate = startOfYear(now).toISOString();
+      endDate = endOfYear(now).toISOString();
+    } else if (filterPeriode === 'custom') {
+      if (customDateDebut) startDate = new Date(customDateDebut).toISOString();
+      if (customDateFin) {
+        const dFin = new Date(customDateFin);
+        dFin.setHours(23, 59, 59, 999);
+        endDate = dFin.toISOString();
+      }
+    }
+
+    if (startDate) {
+      query = query.or(`date_vente.gte.${startDate},and(date_vente.is.null,created_at.gte.${startDate})`);
+    }
+    if (endDate) {
+      query = query.or(`date_vente.lte.${endDate},and(date_vente.is.null,created_at.lte.${endDate})`);
+    }
+
     const from = (currentPage - 1) * itemsPerPage;
     const to = from + itemsPerPage - 1;
 
-    let { data, error, count } = await query
-      .order('date_vente', { ascending: false })
-      .order('created_at', { ascending: false })
-      .range(from, to);
+    // Sorting
+    const isAsc = sortOrder === 'asc';
+    query = query.order(sortBy, { ascending: isAsc, nullsFirst: false });
+    if (sortBy !== 'created_at') {
+      query = query.order('created_at', { ascending: false });
+    }
+
+    let { data, error, count } = await query.range(from, to);
 
     // Fallback if vente_articles join fails
     if (error && error.message) {
-      const fallbackQuery = supabase.from('ventes').select('*', { count: 'exact' });
-      if (debouncedSearch) fallbackQuery.or(`client_nom.ilike.%${debouncedSearch}%,details.ilike.%${debouncedSearch}%`);
+      let fallbackQuery = supabase.from('ventes').select('*', { count: 'exact' });
+      if (debouncedSearch) fallbackQuery = fallbackQuery.or(`client_nom.ilike.%${debouncedSearch}%,details.ilike.%${debouncedSearch}%`);
       if (filterPaymentStatut && filterPaymentStatut !== 'all') {
-        fallbackQuery.eq('etat', filterPaymentStatut);
+        fallbackQuery = fallbackQuery.eq('etat', filterPaymentStatut);
       }
-      const fallbackRes = await fallbackQuery
-        .order('date_vente', { ascending: false })
-        .order('created_at', { ascending: false })
-        .range(from, to);
+      if (filterFournisseur && filterFournisseur !== 'all') {
+        fallbackQuery = fallbackQuery.eq('fournisseur_id', filterFournisseur);
+      }
+      if (filterService && filterService !== 'all') {
+        fallbackQuery = fallbackQuery.eq('service_id', filterService);
+      }
+      if (filterAgent && filterAgent !== 'all') {
+        fallbackQuery = fallbackQuery.eq('created_by', filterAgent);
+      }
+      if (startDate) fallbackQuery = fallbackQuery.or(`date_vente.gte.${startDate},and(date_vente.is.null,created_at.gte.${startDate})`);
+      if (endDate) fallbackQuery = fallbackQuery.or(`date_vente.lte.${endDate},and(date_vente.is.null,created_at.lte.${endDate})`);
+
+      fallbackQuery = fallbackQuery.order(sortBy, { ascending: isAsc, nullsFirst: false });
+      if (sortBy !== 'created_at') {
+        fallbackQuery = fallbackQuery.order('created_at', { ascending: false });
+      }
+
+      const fallbackRes = await fallbackQuery.range(from, to);
       data = fallbackRes.data;
       count = fallbackRes.count;
       error = fallbackRes.error;
@@ -239,11 +367,15 @@ const Ventes = () => {
     const articleList = rawVenteArticles || _legacyArticles || [];
     const effectivePaxList = _passagers || visaMeta?.passagers || [];
 
+    const creatorId = newVenteData.created_by || user?.id || null;
+    const creatorName = newVenteData.created_by_name || profile?.nom || user?.email?.split('@')[0] || 'Admin';
+
     const cleanedPayload = {
       ...newVenteData,
       client_id: newVenteData.client_id || null,
       service_id: newVenteData.service_id || null,
       fournisseur_id: newVenteData.fournisseur_id || null,
+      ...(!id ? { created_by: creatorId, created_by_name: creatorName } : {})
     };
 
     let savedVente = null;
@@ -374,58 +506,79 @@ const Ventes = () => {
   };
 
   const handleGenerateInvoice = async (data) => {
-    // Generate Sequential Number
-    const year = new Date().getFullYear();
-    const { data: lastInvoice } = await supabase
-      .from('factures')
-      .select('numero')
-      .eq('type_doc', data.invoiceType)
-      .like('numero', `%/${year}`)
-      .order('date_creation', { ascending: false })
-      .limit(1);
-      
-    let numero = `001/${year}`;
-    if (lastInvoice && lastInvoice.length > 0 && lastInvoice[0].numero) {
-      const lastNum = parseInt(lastInvoice[0].numero.split('/')[0], 10);
-      const nextNum = (lastNum + 1).toString().padStart(3, '0');
-      numero = `${nextNum}/${year}`;
+    let numero = data.numero;
+
+    // Fallback sequential number generation if not provided
+    if (!numero) {
+      const year = new Date().getFullYear();
+      const { data: lastInvoice } = await supabase
+        .from('factures')
+        .select('numero')
+        .eq('type_doc', data.invoiceType)
+        .like('numero', `%/${year}`)
+        .order('date_creation', { ascending: false })
+        .limit(1);
+        
+      numero = `001/${year}`;
+      if (lastInvoice && lastInvoice.length > 0 && lastInvoice[0].numero) {
+        const lastNum = parseInt(lastInvoice[0].numero.split('/')[0], 10);
+        const nextNum = (lastNum + 1).toString().padStart(3, '0');
+        numero = `${nextNum}/${year}`;
+      }
     }
 
-    // Prepare line items from articles or fallback
-    const items = (data.articles && Array.isArray(data.articles) && data.articles.length > 0)
-      ? data.articles.map(art => ({
-          categorie: art.categorie || 'Prestation',
-          description: `[${art.categorie || 'Service'}] ${art.designation || art.details || 'Prestation'}`,
-          quantite: Number(art.quantite) || 1,
-          prix_unitaire: Number(art.prix_vente) || 0,
-          total: (Number(art.quantite) || 1) * (Number(art.prix_vente) || 0)
-        }))
-      : [
-          {
-            description: data.details || 'Prestation de service',
-            quantite: 1,
-            prix_unitaire: parseFloat(data.total) || 0,
-            total: parseFloat(data.total) || 0
-          }
-        ];
+    // Line items customized from builder or fallback
+    const items = (data.items && Array.isArray(data.items) && data.items.length > 0)
+      ? data.items
+      : (data.articles && Array.isArray(data.articles) && data.articles.length > 0)
+        ? data.articles.map(art => ({
+            categorie: art.categorie || 'Prestation',
+            description: `[${art.categorie || 'Service'}] ${art.designation || art.details || 'Prestation'}`,
+            quantite: Number(art.quantite) || 1,
+            prix_unitaire: Number(art.prix_vente) || 0,
+            total: (Number(art.quantite) || 1) * (Number(art.prix_vente) || 0)
+          }))
+        : [
+            {
+              description: data.details || 'Prestation de service',
+              quantite: 1,
+              prix_unitaire: parseFloat(data.total) || 0,
+              total: parseFloat(data.total) || 0
+            }
+          ];
+
+    const total_ht = typeof data.total_ht === 'number'
+      ? data.total_ht
+      : items.reduce((acc, it) => acc + (parseFloat(it.total) || 0), 0);
+
+    const taxeVal = parseFloat(data.invoiceDetails?.taxePercentage) || 0;
+    const total_ttc = typeof data.total_ttc === 'number'
+      ? data.total_ttc
+      : total_ht * (1 + taxeVal / 100);
 
     const newDoc = {
       numero,
       type_doc: data.invoiceType,
-      transaction_id: data.id,
-      client_nom: data.invoiceDetails.clientNomOverride,
-      taxe: parseFloat(data.invoiceDetails.taxePercentage) || 0, 
-      deadline: data.invoiceDetails.deadline || null,
-      moyen_paiement: data.invoiceDetails.moyenPaiement,
-      total_ht: parseFloat(data.total) || 0,
-      total_ttc: (parseFloat(data.total) || 0) * (1 + (parseFloat(data.invoiceDetails.taxePercentage) || 0) / 100),
+      transaction_id: data.id || null,
+      client_nom: data.invoiceDetails?.clientNomOverride || data.client_nom || '',
+      taxe: taxeVal, 
+      deadline: data.invoiceDetails?.deadline || null,
+      moyen_paiement: data.invoiceDetails?.moyenPaiement || 'espèce',
+      total_ht,
+      total_ttc,
       date_creation: new Date().toISOString(),
-      details: data.details, 
+      details: data.invoiceDetails?.details || data.details || '', 
       items: items,
-      service_id: data.service_id,
+      service_id: data.service_id || null,
     };
     
-    await supabase.from('factures').insert([newDoc]);
+    const { error } = await supabase.from('factures').insert([newDoc]);
+    if (error) {
+      console.error("Erreur insertion facture:", error);
+      alert("Erreur lors de la création de la facture: " + error.message);
+      return;
+    }
+
     setInvoiceModal({ isOpen: false, transaction: null, type: null });
     alert(`${data.invoiceType === 'proforma' ? 'Proforma' : 'Facture'} N° ${numero} générée avec succès !`);
   };
@@ -707,47 +860,289 @@ const Ventes = () => {
 
   return (
     <Layout>
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between mb-6 gap-4">
-        <div>
-          <h1 className="text-2xl font-extrabold tracking-tight text-foreground">Suivi des Ventes</h1>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Gestion globale des dossiers, prestations, tranches et règlements multi-devises.
-          </p>
+      <div className="space-y-4 mb-6">
+        {/* Main Header & Quick Controls */}
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+          <div>
+            <h1 className="text-2xl font-extrabold tracking-tight text-foreground">Suivi des Ventes</h1>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Gestion globale des dossiers, prestations, tranches et règlements multi-devises.
+            </p>
+          </div>
+          
+          <div className="flex items-center gap-2.5 flex-wrap">
+            <Button 
+              variant={showAdvancedFilters ? "secondary" : "outline"} 
+              size="sm" 
+              onClick={() => setShowAdvancedFilters(!showAdvancedFilters)} 
+              className={cn("h-9 rounded-xl font-bold text-xs gap-1.5 transition-all", showAdvancedFilters && "border-primary/50 bg-primary/10 text-primary")}
+            >
+              <SlidersHorizontal size={14} />
+              <span>Filtres</span>
+              {activeFiltersCount > 0 && (
+                <Badge variant="default" className="ml-0.5 px-1.5 py-0 h-4 text-[10px] font-black rounded-full bg-primary text-primary-foreground">
+                  {activeFiltersCount}
+                </Badge>
+              )}
+            </Button>
+
+            {activeFiltersCount > 0 && (
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                onClick={handleResetFilters} 
+                className="h-9 rounded-xl font-bold text-xs text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 gap-1"
+                title="Réinitialiser tous les filtres"
+              >
+                <X size={14} />
+                <span>Effacer</span>
+              </Button>
+            )}
+
+            <Button variant="outline" size="sm" onClick={() => setIsReportOpen(true)} className="h-9 rounded-xl font-bold text-xs">
+              <ClipboardList size={15} className="mr-1.5 hidden sm:inline" /> Rapport
+            </Button>
+            
+            <Button onClick={() => { setEditingVente(null); setIsFormOpen(true); }} className="h-9 rounded-xl font-black text-xs shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm">
+              <Plus size={15} className="mr-1 hidden sm:inline" /> Vente
+            </Button>
+          </div>
         </div>
-        
-        <div className="flex items-center gap-3 w-full sm:w-auto flex-wrap">
-          <div className="relative flex-1 sm:w-60">
+
+        {/* Primary Filter Bar */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 lg:grid-cols-12 gap-2.5 bg-card/60 p-3 rounded-2xl border border-border/80 shadow-xs backdrop-blur-sm">
+          {/* Search */}
+          <div className="relative sm:col-span-2 lg:col-span-4">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input 
-              placeholder="Rechercher (Client, Détails)..." 
-              className="pl-9 bg-card text-xs rounded-xl" 
+              placeholder="Rechercher (Client, Détails, Passager)..." 
+              className="pl-9 bg-background text-xs rounded-xl h-9" 
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
             />
+            {searchQuery && (
+              <button 
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-2.5 text-muted-foreground hover:text-foreground"
+              >
+                <X size={14} />
+              </button>
+            )}
           </div>
 
-          <Select 
-            value={filterPaymentStatut} 
-            onChange={(e) => {
-              setFilterPaymentStatut(e.target.value);
-              setCurrentPage(1);
-            }}
-            className="w-44 h-9 text-xs bg-card rounded-xl font-bold"
-          >
-            <option value="all">Tous les règlements</option>
-            <option value="Payé">🟢 Payé intégralement</option>
-            <option value="Reservé">🟡 Réservé / Acompte</option>
-            <option value="Remboursé">🟣 Remboursé</option>
-            <option value="Annulé">⚪ Annulé</option>
-          </Select>
+          {/* Règlement Statut */}
+          <div className="lg:col-span-3">
+            <Select 
+              value={filterPaymentStatut} 
+              onChange={(e) => {
+                setFilterPaymentStatut(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full h-9 text-xs bg-background rounded-xl font-bold"
+            >
+              <option value="all">Tous les règlements</option>
+              <option value="Payé">🟢 Payé intégralement</option>
+              <option value="Reservé">🟡 Réservé / Acompte</option>
+              <option value="Remboursé">🟣 Remboursé</option>
+              <option value="Annulé">⚪ Annulé</option>
+            </Select>
+          </div>
 
-          <Button variant="outline" size="sm" onClick={() => setIsReportOpen(true)} className="h-9 rounded-xl font-bold text-xs">
-            <ClipboardList size={15} className="mr-1.5 hidden sm:inline" /> Rapport
-          </Button>
-          <Button onClick={() => { setEditingVente(null); setIsFormOpen(true); }} className="h-9 rounded-xl font-black text-xs shrink-0 bg-primary hover:bg-primary/90 text-primary-foreground shadow-sm">
-            <Plus size={15} className="mr-1 hidden sm:inline" /> Vente
-          </Button>
+          {/* Période Selector */}
+          <div className="lg:col-span-3">
+            <Select 
+              value={filterPeriode} 
+              onChange={(e) => {
+                setFilterPeriode(e.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full h-9 text-xs bg-background rounded-xl font-medium"
+            >
+              <option value="all">📅 Toutes les périodes</option>
+              <option value="today">Aujourd'hui</option>
+              <option value="this_week">Cette semaine</option>
+              <option value="this_month">Ce mois-ci</option>
+              <option value="this_year">Cette année</option>
+              <option value="custom">Période personnalisée...</option>
+            </Select>
+          </div>
+
+          {/* Quick Sort Selector */}
+          <div className="lg:col-span-2">
+            <Select 
+              value={`${sortBy}_${sortOrder}`} 
+              onChange={(e) => {
+                const val = e.target.value;
+                if (val === 'date_desc') { setSortBy('date_vente'); setSortOrder('desc'); }
+                else if (val === 'date_asc') { setSortBy('date_vente'); setSortOrder('asc'); }
+                else if (val === 'total_desc') { setSortBy('total'); setSortOrder('desc'); }
+                else if (val === 'total_asc') { setSortBy('total'); setSortOrder('asc'); }
+                else if (val === 'client_asc') { setSortBy('client_nom'); setSortOrder('asc'); }
+                else if (val === 'client_desc') { setSortBy('client_nom'); setSortOrder('desc'); }
+                else if (val === 'comm_desc') { setSortBy('commission'); setSortOrder('desc'); }
+                setCurrentPage(1);
+              }}
+              className="w-full h-9 text-xs bg-background rounded-xl font-semibold"
+            >
+              <option value="date_desc">Tri: Date (Récent)</option>
+              <option value="date_asc">Tri: Date (Ancien)</option>
+              <option value="total_desc">Tri: Total ($$$ &rarr; $)</option>
+              <option value="total_asc">Tri: Total ($ &rarr; $$$)</option>
+              <option value="client_asc">Tri: Client (A &rarr; Z)</option>
+              <option value="client_desc">Tri: Client (Z &rarr; A)</option>
+              <option value="comm_desc">Tri: Commission max</option>
+            </Select>
+          </div>
         </div>
+
+        {/* Collapsible Advanced Filters Panel */}
+        {showAdvancedFilters && (
+          <div className="p-4 bg-muted/30 border border-border/70 rounded-2xl space-y-3 animate-in fade-in zoom-in-98 duration-150">
+            <div className="flex items-center justify-between border-b border-border/50 pb-2">
+              <span className="text-xs font-bold text-foreground flex items-center gap-1.5">
+                <SlidersHorizontal size={13} className="text-primary" /> Filtres Avancés par Fournisseur, Service et Dates
+              </span>
+              {activeFiltersCount > 0 && (
+                <button 
+                  onClick={handleResetFilters}
+                  className="text-[11px] font-bold text-muted-foreground hover:text-rose-500 transition-colors"
+                >
+                  Tout réinitialiser
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+              {/* Fournisseur Filter */}
+              <div>
+                <Label className="text-[11px] font-bold text-muted-foreground mb-1 block">Fournisseur</Label>
+                <Select
+                  value={filterFournisseur}
+                  onChange={(e) => {
+                    setFilterFournisseur(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="h-9 text-xs bg-background rounded-xl w-full"
+                >
+                  <option value="all">Tous les fournisseurs</option>
+                  {fournisseursList.map(f => (
+                    <option key={f.id} value={f.id}>{f.nom}</option>
+                  ))}
+                </Select>
+              </div>
+
+              {/* Service Filter */}
+              <div>
+                <Label className="text-[11px] font-bold text-muted-foreground mb-1 block">Type de Service</Label>
+                <Select
+                  value={filterService}
+                  onChange={(e) => {
+                    setFilterService(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="h-9 text-xs bg-background rounded-xl w-full"
+                >
+                  <option value="all">Tous les services</option>
+                  {servicesList.map(s => (
+                    <option key={s.id} value={s.id}>{s.nom}</option>
+                  ))}
+                </Select>
+              </div>
+
+              {/* Agent Filter */}
+              <div>
+                <Label className="text-[11px] font-bold text-muted-foreground mb-1 block">Saisi par (Agent)</Label>
+                <Select
+                  value={filterAgent}
+                  onChange={(e) => {
+                    setFilterAgent(e.target.value);
+                    setCurrentPage(1);
+                  }}
+                  className="h-9 text-xs bg-background rounded-xl w-full"
+                >
+                  <option value="all">Tous les agents / admins</option>
+                  {profilesList.map(p => (
+                    <option key={p.id} value={p.id}>{p.nom || p.email} ({p.role === 'admin' ? 'Admin' : 'Agent'})</option>
+                  ))}
+                </Select>
+              </div>
+
+              {/* Date Début */}
+              <div>
+                <Label className="text-[11px] font-bold text-muted-foreground mb-1 block">Date Début</Label>
+                <Input
+                  type="date"
+                  value={customDateDebut}
+                  onChange={(e) => {
+                    setCustomDateDebut(e.target.value);
+                    setFilterPeriode('custom');
+                    setCurrentPage(1);
+                  }}
+                  className="h-9 text-xs bg-background rounded-xl"
+                />
+              </div>
+
+              {/* Date Fin */}
+              <div>
+                <Label className="text-[11px] font-bold text-muted-foreground mb-1 block">Date Fin</Label>
+                <Input
+                  type="date"
+                  value={customDateFin}
+                  onChange={(e) => {
+                    setCustomDateFin(e.target.value);
+                    setFilterPeriode('custom');
+                    setCurrentPage(1);
+                  }}
+                  className="h-9 text-xs bg-background rounded-xl"
+                />
+              </div>
+            </div>
+
+            {/* Active filter badges bar */}
+            {activeFiltersCount > 0 && (
+              <div className="pt-2 flex items-center gap-1.5 flex-wrap">
+                <span className="text-[10px] font-bold uppercase text-muted-foreground">Filtres actifs :</span>
+                {searchQuery && (
+                  <Badge variant="outline" className="text-[10px] bg-background gap-1 pr-1 border-primary/30 text-foreground">
+                    Recherche: "{searchQuery}"
+                    <button onClick={() => setSearchQuery('')}><X size={11} className="hover:text-rose-500" /></button>
+                  </Badge>
+                )}
+                {filterPaymentStatut !== 'all' && (
+                  <Badge variant="outline" className="text-[10px] bg-background gap-1 pr-1 border-primary/30 text-foreground">
+                    Règlement: {filterPaymentStatut}
+                    <button onClick={() => setFilterPaymentStatut('all')}><X size={11} className="hover:text-rose-500" /></button>
+                  </Badge>
+                )}
+                {filterFournisseur !== 'all' && (
+                  <Badge variant="outline" className="text-[10px] bg-background gap-1 pr-1 border-primary/30 text-foreground">
+                    Fournisseur: {getFournisseurName(filterFournisseur)}
+                    <button onClick={() => setFilterFournisseur('all')}><X size={11} className="hover:text-rose-500" /></button>
+                  </Badge>
+                )}
+                {filterService !== 'all' && (
+                  <Badge variant="outline" className="text-[10px] bg-background gap-1 pr-1 border-primary/30 text-foreground">
+                    Service: {getServiceName(filterService)}
+                    <button onClick={() => setFilterService('all')}><X size={11} className="hover:text-rose-500" /></button>
+                  </Badge>
+                )}
+                {filterAgent !== 'all' && (
+                  <Badge variant="outline" className="text-[10px] bg-background gap-1 pr-1 border-primary/30 text-foreground">
+                    Agent: {profilesList.find(p => p.id === filterAgent)?.nom || 'Agent'}
+                    <button onClick={() => setFilterAgent('all')}><X size={11} className="hover:text-rose-500" /></button>
+                  </Badge>
+                )}
+                {filterPeriode !== 'all' && (
+                  <Badge variant="outline" className="text-[10px] bg-background gap-1 pr-1 border-primary/30 text-foreground">
+                    Période: {filterPeriode === 'custom' ? `${customDateDebut || '—'} au ${customDateFin || '—'}` : filterPeriode}
+                    <button onClick={() => { setFilterPeriode('all'); setCustomDateDebut(''); setCustomDateFin(''); }}><X size={11} className="hover:text-rose-500" /></button>
+                  </Badge>
+                )}
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Stats Cards */}
@@ -798,28 +1193,87 @@ const Ventes = () => {
           <table className="w-full text-xs">
             <thead>
               <tr className="border-b bg-muted/50 text-muted-foreground text-[10px] font-black uppercase tracking-wider">
-                <th className="px-4 py-3 text-left">Date</th>
-                <th className="px-4 py-3 text-left">Client & Destination</th>
+                <th 
+                  className="px-4 py-3 text-left cursor-pointer select-none hover:text-foreground transition-colors group"
+                  onClick={() => handleSort('date_vente')}
+                  title="Trier par date"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>Date</span>
+                    {sortBy === 'date_vente' ? (
+                      sortOrder === 'asc' ? <ArrowUp size={12} className="text-primary font-bold" /> : <ArrowDown size={12} className="text-primary font-bold" />
+                    ) : (
+                      <ArrowUpDown size={11} className="text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                  </div>
+                </th>
+
+                <th 
+                  className="px-4 py-3 text-left cursor-pointer select-none hover:text-foreground transition-colors group"
+                  onClick={() => handleSort('client_nom')}
+                  title="Trier par nom client"
+                >
+                  <div className="flex items-center gap-1">
+                    <span>Client & Destination</span>
+                    {sortBy === 'client_nom' ? (
+                      sortOrder === 'asc' ? <ArrowUp size={12} className="text-primary font-bold" /> : <ArrowDown size={12} className="text-primary font-bold" />
+                    ) : (
+                      <ArrowUpDown size={11} className="text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                  </div>
+                </th>
+
                 <th className="px-4 py-3 text-left">Prestations / Articles</th>
                 <th className="px-4 py-3 text-left">Fournisseur</th>
-                <th className="px-4 py-3 text-right">Total Vente</th>
+                <th className="px-4 py-3 text-left">Saisi par</th>
+
+                <th 
+                  className="px-4 py-3 text-right cursor-pointer select-none hover:text-foreground transition-colors group"
+                  onClick={() => handleSort('total')}
+                  title="Trier par montant total"
+                >
+                  <div className="flex items-center justify-end gap-1">
+                    <span>Total Vente</span>
+                    {sortBy === 'total' ? (
+                      sortOrder === 'asc' ? <ArrowUp size={12} className="text-primary font-bold" /> : <ArrowDown size={12} className="text-primary font-bold" />
+                    ) : (
+                      <ArrowUpDown size={11} className="text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                  </div>
+                </th>
+
                 <th className="px-4 py-3 text-right">Encaissé</th>
                 <th className="px-4 py-3 text-right">Reste Dû</th>
-                <th className="px-4 py-3 text-center">Règlement</th>
+
+                <th 
+                  className="px-4 py-3 text-center cursor-pointer select-none hover:text-foreground transition-colors group"
+                  onClick={() => handleSort('etat')}
+                  title="Trier par statut de règlement"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>Règlement</span>
+                    {sortBy === 'etat' ? (
+                      sortOrder === 'asc' ? <ArrowUp size={12} className="text-primary font-bold" /> : <ArrowDown size={12} className="text-primary font-bold" />
+                    ) : (
+                      <ArrowUpDown size={11} className="text-muted-foreground/40 opacity-0 group-hover:opacity-100 transition-opacity" />
+                    )}
+                  </div>
+                </th>
+
                 <th className="px-4 py-3 text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border/60">
               {loading ? (
                 <tr>
-                  <td colSpan="9" className="py-16 text-center">
+                  <td colSpan="10" className="py-16 text-center">
                     <Loader2 size={28} className="mx-auto animate-spin text-primary mb-2" />
                     <p className="font-medium text-muted-foreground text-xs">Chargement des ventes...</p>
                   </td>
                 </tr>
               ) : ventes.length === 0 ? (
                 <tr>
-                  <td colSpan="9" className="py-16 text-center">
+                  <td colSpan="10" className="py-16 text-center">
                     <CreditCard size={36} className="mx-auto text-muted-foreground/30 mb-2" />
                     <p className="font-medium text-muted-foreground text-xs">Aucune vente trouvée</p>
                   </td>
@@ -914,6 +1368,14 @@ const Ventes = () => {
                           </div>
                         );
                       })()}
+                    </td>
+
+                    {/* Saisi par */}
+                    <td className="px-4 py-3 whitespace-nowrap">
+                      <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-md bg-muted/70 text-[11px] font-bold text-foreground border border-border/70 shadow-2xs">
+                        <User size={11} className="text-primary shrink-0" />
+                        <span className="truncate max-w-[110px]">{v.created_by_name || 'Admin'}</span>
+                      </span>
                     </td>
 
                     {/* Total Vente */}

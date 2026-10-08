@@ -520,6 +520,7 @@ const Paiements = () => {
                     <th className="px-4 py-3.5">Date</th>
                     <th className="px-4 py-3.5">N° Reçu</th>
                     <th className="px-4 py-3.5">Payeur & Bénéficiaire</th>
+                    <th className="px-4 py-3.5">Saisi par</th>
                     <th className="px-4 py-3.5">Dossier / Vente</th>
                     <th className="px-4 py-3.5">Moyen</th>
                     <th className="px-4 py-3.5 text-right">Montant Devise</th>
@@ -554,6 +555,13 @@ const Paiements = () => {
                               👤 Pax : {p.passager_nom}
                             </div>
                           )}
+                        </td>
+
+                        <td className="px-4 py-3.5 whitespace-nowrap">
+                          <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-muted/60 px-2 py-0.5 rounded-md border text-foreground">
+                            <User size={10} className="text-primary" />
+                            <span>{p.created_by_name || 'Admin'}</span>
+                          </span>
                         </td>
 
                         <td className="px-4 py-3.5">

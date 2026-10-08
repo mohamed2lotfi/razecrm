@@ -5,7 +5,8 @@ import {
   Users, CreditCard, FileText, 
   Database, KanbanSquare, Globe, ChevronDown, ChevronRight, LogOut,
   TrendingDown, FileBarChart, Scan, Briefcase, Stamp, Contact, Mail,
-  ShieldCheck, UserCheck, Package, Calculator, User, Coins
+  ShieldCheck, UserCheck, Package, Calculator, User, Coins, PlaneTakeoff,
+  Layers
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { supabase } from '@/lib/supabase';
@@ -22,6 +23,7 @@ const navItems = [
 ];
 
 const docItems = [
+  { to: '/telex', icon: PlaneTakeoff, label: 'Billets Télex' },
   { to: '/documents', icon: Scan, label: 'Numérisation & Scans' },
   { to: '/facturation', icon: FileText, label: 'Facturation' },
 ];
@@ -181,6 +183,22 @@ const Sidebar = () => {
                 <span>Pèlerins</span>
                 <Users size={13} className="text-emerald-400" />
               </NavLink>
+
+              {isAdmin && (
+                <NavLink
+                  to="/omra/tracking"
+                  className={({ isActive }) => cn(
+                    "px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between",
+                    isActive ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30" : "text-amber-400/90 hover:text-amber-300 hover:bg-amber-500/10"
+                  )}
+                >
+                  <span className="flex items-center gap-1.5 font-bold">
+                    <Layers size={13} className="text-amber-400" />
+                    Tracking Omra
+                  </span>
+                  <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">Admin</span>
+                </NavLink>
+              )}
               {groupes.map(g => (
                 <NavLink
                   key={g.id}

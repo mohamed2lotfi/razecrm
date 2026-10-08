@@ -14,6 +14,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import useLocalStorage from '@/hooks/useLocalStorage';
 import { supabase } from '@/lib/supabase';
 
+const BACKEND_URL = import.meta.env.VITE_BACKEND_URL || (typeof window !== 'undefined' ? `http://${window.location.hostname}:3000` : 'http://localhost:3000');
+
 const DEFAULT_CONFIG = {
   globalScanPath: 'D:\\AgencyCRM\\Documents_Scannes',
   printerIp: '192.168.1.11',
@@ -117,7 +119,7 @@ const Documents = () => {
 
     const fetchPrinters = async () => {
       try {
-        const res = await fetch('http://localhost:3000/printers');
+        const res = await fetch(`${BACKEND_URL}/printers`);
         const data = await res.json();
         if (data && data.printers) {
           setPrintersList(data.printers);
@@ -154,7 +156,7 @@ const Documents = () => {
         format: newConfig.format,
         color_mode: newConfig.colorMode,
         auto_crop: newConfig.autoCrop,
-        auto_duplex: newConfig.autoDuplex,
+        autoDuplex: newConfig.autoDuplex,
         actions: newConfig.actions,
         updated_at: new Date().toISOString()
       });
@@ -169,7 +171,7 @@ const Documents = () => {
     setIpTestResult(null);
 
     try {
-      const res = await fetch('http://localhost:3000/printers/test-ip', {
+      const res = await fetch(`${BACKEND_URL}/printers/test-ip`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ip: config.printerIp.trim() })
@@ -201,7 +203,7 @@ const Documents = () => {
 
   const handleLaunchHardwareScanner = async () => {
     try {
-      await fetch('http://localhost:3000/scan/launch-hardware', { method: 'POST' });
+      await fetch(`${BACKEND_URL}/scan/launch-hardware`, { method: 'POST' });
     } catch (err) {
       console.warn("Erreur ouverture assistant scanner:", err);
     }
@@ -209,7 +211,7 @@ const Documents = () => {
 
   const handleOpenKyoceraPanel = async () => {
     try {
-      await fetch('http://localhost:3000/scan/launch-kyocera-panel', {
+      await fetch(`${BACKEND_URL}/scan/launch-kyocera-panel`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ip: config.printerIp || '192.168.1.11' })
@@ -270,7 +272,7 @@ const Documents = () => {
       setScanProgress(50);
 
       // 3. Surveiller le dossier pour l'arrivée du nouveau fichier scanné
-      const response = await fetch('http://localhost:3000/scan/watch-folder', {
+      const response = await fetch(`${BACKEND_URL}/scan/watch-folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -315,7 +317,7 @@ const Documents = () => {
 
     // 3. Surveiller le dossier pour un nouveau fichier (le Kyocera y envoie le scan)
     try {
-      const response = await fetch('http://localhost:3000/scan/watch-folder', {
+      const response = await fetch(`${BACKEND_URL}/scan/watch-folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -346,7 +348,7 @@ const Documents = () => {
 
   const handleOpenFolder = async (targetFilePath) => {
     try {
-      await fetch('http://localhost:3000/open-folder', {
+      await fetch(`${BACKEND_URL}/open-folder`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filePath: targetFilePath || generatedFilePath })

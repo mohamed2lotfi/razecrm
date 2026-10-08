@@ -1478,11 +1478,16 @@ const Pipeline = () => {
               const articleList = rawVenteArticles || rawArticles || [];
               const effectivePaxList = _passagers || visaMeta?.passagers || [];
 
+              const creatorId = newVenteData.created_by || user?.id || null;
+              const creatorName = newVenteData.created_by_name || profile?.nom || user?.email?.split('@')[0] || 'Admin';
+
               const cleanedPayload = {
                 ...newVenteData,
                 client_id: newVenteData.client_id || null,
                 service_id: newVenteData.service_id || null,
                 fournisseur_id: newVenteData.fournisseur_id || null,
+                created_by: creatorId,
+                created_by_name: creatorName
               };
 
               let { data, error } = await supabase.from('ventes').insert([cleanedPayload]).select();

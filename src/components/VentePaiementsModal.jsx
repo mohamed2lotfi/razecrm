@@ -14,6 +14,7 @@ import CountryFlag from '@/components/CountryFlag';
 import { format, parseISO } from 'date-fns';
 import { fr } from 'date-fns/locale';
 import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -52,6 +53,7 @@ export const fmtCurrency = (amount, currency = 'DZD') => {
 };
 
 const VentePaiementsModal = ({ vente, onClose, onPaiementsUpdated }) => {
+  const { user, profile } = useAuth();
   const [paiements, setPaiements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -261,6 +263,9 @@ const VentePaiementsModal = ({ vente, onClose, onPaiementsUpdated }) => {
     const rateToSave = devise === 'DZD' ? 1 : parseFloat(tauxChange);
     const dzdToSave = currentMontantDZD;
 
+    const creatorId = user?.id || null;
+    const creatorName = profile?.nom || user?.email?.split('@')[0] || 'Admin';
+
     const payload = {
       vente_id: vente.id,
       client_id: vente.client_id || null,
@@ -273,7 +278,8 @@ const VentePaiementsModal = ({ vente, onClose, onPaiementsUpdated }) => {
       montant_dzd: dzdToSave,
       moyen_paiement: moyenPaiement,
       num_recu: numRecu.trim() || null,
-      notes: notes.trim() || null
+      notes: notes.trim() || null,
+      ...(!isEditing ? { created_by: creatorId, created_by_name: creatorName } : {})
     };
 
     try {
@@ -785,6 +791,7 @@ const VentePaiementsModal = ({ vente, onClose, onPaiementsUpdated }) => {
                         <th className="px-3.5 py-3">Date</th>
                         <th className="px-3.5 py-3">N° Reçu</th>
                         <th className="px-3.5 py-3">Payeur / Passager</th>
+                        <th className="px-3.5 py-3">Saisi par</th>
                         <th className="px-3.5 py-3">Moyen</th>
                         <th className="px-3.5 py-3 text-right">Montant Devise</th>
                         <th className="px-3.5 py-3 text-right">Équivalent DZD</th>
@@ -818,6 +825,13 @@ const VentePaiementsModal = ({ vente, onClose, onPaiementsUpdated }) => {
                                   👤 Pax : {p.passager_nom}
                                 </div>
                               )}
+                            </td>
+
+                            <td className="px-3.5 py-3 whitespace-nowrap">
+                              <span className="inline-flex items-center gap-1 font-bold text-[10px] bg-muted/60 px-2 py-0.5 rounded-md border text-foreground">
+                                <User size={10} className="text-primary" />
+                                <span>{p.created_by_name || 'Admin'}</span>
+                              </span>
                             </td>
 
                             <td className="px-3.5 py-3 whitespace-nowrap">

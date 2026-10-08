@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Building2, ArrowLeft, Plane, Loader2 } from 'lucide-react';
+import { Plus, Trash2, Building2, ArrowLeft, Plane, Loader2, Sparkles, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { supabase } from '@/lib/supabase';
+import { generateNextGroupCode } from '@/lib/omraChecklistConstants';
 
 const CurrencyInput = ({ label, value, onChange }) => (
   <div className="space-y-1.5">
@@ -28,9 +29,11 @@ const CurrencyInput = ({ label, value, onChange }) => (
 const OmraGroupForm = ({ onCancel, onSave, group }) => {
   const [compagnies, setCompagnies] = useState([]);
   const [hotelsMaster, setHotelsMaster] = useState([]);
+  const [existingGroups, setExistingGroups] = useState([]);
   const [loadingMaster, setLoadingMaster] = useState(true);
 
   const [formData, setFormData] = useState({
+    code: '',
     nom: '',
     date_depart: '',
     date_retour: '',
@@ -42,12 +45,24 @@ const OmraGroupForm = ({ onCancel, onSave, group }) => {
   useEffect(() => {
     const fetchMasterData = async () => {
       setLoadingMaster(true);
-      const [cRes, hRes] = await Promise.all([
+      const [cRes, hRes, gRes] = await Promise.all([
         supabase.from('compagnies_aeriennes').select('*'),
-        supabase.from('hotels').select('*')
+        supabase.from('hotels').select('*'),
+        supabase.from('omra_groupes').select('id, nom, code, created_at')
       ]);
       if (cRes.data) setCompagnies(cRes.data);
       if (hRes.data) setHotelsMaster(hRes.data);
+      const grps = gRes.data || [];
+      setExistingGroups(grps);
+
+      if (!group) {
+        const nextCode = generateNextGroupCode(grps, null);
+        setFormData(prev => ({
+          ...prev,
+          code: nextCode
+        }));
+      }
+
       setLoadingMaster(false);
     };
     fetchMasterData();
@@ -55,18 +70,33 @@ const OmraGroupForm = ({ onCancel, onSave, group }) => {
 
   useEffect(() => {
     if (group) {
-      setFormData(group);
-    } else {
       setFormData({
-        nom: '',
-        date_depart: '',
-        date_retour: '',
-        compagnie: '',
-        nbr_places: '',
-        hotels: []
+        ...group,
+        code: group.code || group.nom?.match(/OMRAETV\d+\/\d+/i)?.[0] || generateNextGroupCode(existingGroups, group.date_depart)
       });
+    } else if (existingGroups.length > 0) {
+      const nextCode = generateNextGroupCode(existingGroups, null);
+      setFormData(prev => ({
+        ...prev,
+        code: prev.code || nextCode
+      }));
     }
-  }, [group]);
+  }, [group, existingGroups.length]);
+
+  const handleRegenerateCode = (departDate = formData.date_depart) => {
+    const newCode = generateNextGroupCode(existingGroups, departDate);
+    setFormData(prev => ({ ...prev, code: newCode }));
+  };
+
+  const handleDepartChange = (newDate) => {
+    setFormData(prev => {
+      const updated = { ...prev, date_depart: newDate };
+      if (!group && (!prev.code || prev.code.startsWith('OMRAETV'))) {
+        updated.code = generateNextGroupCode(existingGroups, newDate);
+      }
+      return updated;
+    });
+  };
 
   const handleAddHotel = () => {
     setFormData(prev => ({
@@ -115,7 +145,10 @@ const OmraGroupForm = ({ onCancel, onSave, group }) => {
         <Button variant="ghost" size="icon" onClick={onCancel}>
           <ArrowLeft size={20} />
         </Button>
-        <h2 className="text-2xl font-extrabold">{group ? 'Modifier le Groupe' : 'Nouveau Groupe Omra'}</h2>
+        <div>
+          <h2 className="text-2xl font-extrabold">{group ? 'Modifier le Groupe' : 'Nouveau Groupe Omra'}</h2>
+          <p className="text-xs text-muted-foreground mt-0.5">Configuration des vols, hôtels et numérotation automatique</p>
+        </div>
       </div>
 
       <Card className="overflow-hidden border-0 shadow-lg ring-1 ring-black/5">
@@ -130,18 +163,48 @@ const OmraGroupForm = ({ onCancel, onSave, group }) => {
             
             {/* Section 1: Informations du vol/groupe */}
             <div className="space-y-5">
-              <h3 className="text-sm font-bold uppercase tracking-wider text-primary border-b pb-3 flex items-center gap-2"><Plane size={16} /> Informations Générales</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <h3 className="text-sm font-bold uppercase tracking-wider text-primary border-b pb-3 flex items-center gap-2">
+                <Plane size={16} /> Informations Générales & Numérotation
+              </h3>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Code Groupe Automatique */}
                 <div className="space-y-2.5">
-                  <Label className="text-sm font-bold text-foreground">Nom du groupe <span className="text-red-500">*</span></Label>
+                  <div className="flex items-center justify-between">
+                    <Label className="text-sm font-bold text-foreground flex items-center gap-1.5">
+                      <Sparkles size={14} className="text-amber-500" /> N° de Groupe <span className="text-red-500">*</span>
+                    </Label>
+                    <button
+                      type="button"
+                      onClick={() => handleRegenerateCode()}
+                      className="text-[11px] text-primary hover:underline font-semibold flex items-center gap-1"
+                      title="Régénérer automatiquement le numéro séquentiel"
+                    >
+                      <RefreshCw size={11} /> Auto
+                    </button>
+                  </div>
                   <Input 
                     required 
-                    placeholder="Ex: Groupe VIP Octobre" 
+                    placeholder="Ex: OMRAETV001/1448" 
+                    value={formData.code || ''} 
+                    onChange={e => setFormData({...formData, code: e.target.value.toUpperCase()})} 
+                    className="h-11 font-mono font-bold bg-emerald-50/50 text-emerald-800 border-emerald-300 focus-visible:bg-white transition-colors"
+                  />
+                </div>
+
+                {/* Nom du groupe */}
+                <div className="space-y-2.5 md:col-span-2">
+                  <Label className="text-sm font-bold text-foreground">Nom / Libellé du groupe <span className="text-red-500">*</span></Label>
+                  <Input 
+                    required 
+                    placeholder="Ex: Groupe VIP Octobre - Saudi Airlines" 
                     value={formData.nom} 
                     onChange={e => setFormData({...formData, nom: e.target.value})} 
                     className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
                   />
                 </div>
+
+                {/* Nombre de places */}
                 <div className="space-y-2.5">
                   <Label className="text-sm font-bold text-foreground">Nombre de places <span className="text-red-500">*</span></Label>
                   <Input 
@@ -153,16 +216,20 @@ const OmraGroupForm = ({ onCancel, onSave, group }) => {
                     className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
                   />
                 </div>
+
+                {/* Date de départ */}
                 <div className="space-y-2.5">
                   <Label className="text-sm font-bold text-foreground">Date de départ <span className="text-red-500">*</span></Label>
                   <Input 
                     type="date" 
                     required 
                     value={formData.date_depart || ''} 
-                    onChange={e => setFormData({...formData, date_depart: e.target.value})} 
+                    onChange={e => handleDepartChange(e.target.value)} 
                     className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
                   />
                 </div>
+
+                {/* Date de retour */}
                 <div className="space-y-2.5">
                   <Label className="text-sm font-bold text-foreground">Date de retour <span className="text-red-500">*</span></Label>
                   <Input 
@@ -173,7 +240,9 @@ const OmraGroupForm = ({ onCancel, onSave, group }) => {
                     className="h-11 bg-muted/20 focus-visible:bg-transparent transition-colors"
                   />
                 </div>
-                <div className="space-y-2.5 md:col-span-2">
+
+                {/* Compagnie Aérienne */}
+                <div className="space-y-2.5 md:col-span-3">
                   <Label className="text-sm font-bold text-foreground">Compagnie Aérienne</Label>
                   {compagnies.length === 0 ? (
                     <div className="text-sm text-destructive bg-destructive/10 p-3 rounded-lg border border-destructive/20">

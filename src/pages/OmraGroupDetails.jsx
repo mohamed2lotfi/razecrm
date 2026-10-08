@@ -22,6 +22,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import ClientForm from '@/components/ClientForm';
+import OmraGroupChecklistTab from '@/components/OmraGroupChecklistTab';
 import { ReactSortable } from "react-sortablejs";
 
 const CHAMBRE_CAPACITY = {
@@ -60,7 +61,9 @@ const mapEnregistrementToCamel = (row, interList) => ({
   totalCommission: row.total_commission,
   totalNet: row.total_net,
   clientId: row.client_id,
-  dateCreation: row.date_creation
+  dateCreation: row.date_creation,
+  createdBy: row.created_by,
+  createdByName: row.created_by_name
 });
 
 const mapCamelToEnregistrement = (cam, interList) => ({
@@ -83,7 +86,9 @@ const mapCamelToEnregistrement = (cam, interList) => ({
   total_commission: Number(cam.totalCommission) || 0,
   total_net: Number(cam.totalNet) || 0,
   client_id: cam.clientId || null,
-  date_creation: cam.dateCreation || new Date().toISOString()
+  date_creation: cam.dateCreation || new Date().toISOString(),
+  created_by: cam.createdBy || null,
+  created_by_name: cam.createdByName || null
 });
 
 const mapPaiementToCamel = (row) => ({
@@ -97,7 +102,9 @@ const mapPaiementToCamel = (row) => ({
   devise: row.devise,
   tauxChange: row.taux_change,
   montantDZD: row.montant_dzd,
-  paiementRabatteur: row.paiement_rabatteur
+  paiementRabatteur: row.paiement_rabatteur,
+  createdBy: row.created_by,
+  createdByName: row.created_by_name
 });
 
 const mapCamelToPaiement = (cam) => ({
@@ -110,7 +117,9 @@ const mapCamelToPaiement = (cam) => ({
   devise: cam.devise,
   taux_change: cam.tauxChange === '' ? null : Number(cam.tauxChange),
   montant_dzd: cam.montantDZD === '' ? 0 : Number(cam.montantDZD),
-  paiement_rabatteur: cam.paiementRabatteur
+  paiement_rabatteur: cam.paiementRabatteur,
+  created_by: cam.createdBy || null,
+  created_by_name: cam.createdByName || null
 });
 
 const mapCommissionToCamel = (row, interList) => ({
@@ -119,7 +128,9 @@ const mapCommissionToCamel = (row, interList) => ({
   intermediaire: interList.find(i => i.id === row.intermediaire_id)?.nom || '',
   montant: row.montant,
   date: row.date,
-  note: row.note
+  note: row.note,
+  createdBy: row.created_by,
+  createdByName: row.created_by_name
 });
 
 const mapCamelToCommission = (cam, interList) => ({
@@ -127,13 +138,15 @@ const mapCamelToCommission = (cam, interList) => ({
   intermediaire_id: interList.find(i => i.nom === cam.intermediaire)?.id || null,
   montant: cam.montant === '' ? 0 : Number(cam.montant),
   date: cam.date,
-  note: cam.note
+  note: cam.note,
+  created_by: cam.createdBy || null,
+  created_by_name: cam.createdByName || null
 });
 
 const OmraGroupDetails = () => {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { isAdmin } = useAuth();
+  const { isAdmin, user, profile } = useAuth();
   
   const [groupes, setGroupes] = useState([]);
   const [intermediaires, setIntermediaires] = useState([]);
@@ -150,6 +163,7 @@ const OmraGroupDetails = () => {
   const searchParams = new URLSearchParams(location.search);
   const urlClientId = searchParams.get('clientId');
   const urlOpenForm = searchParams.get('openForm');
+  const urlTab = searchParams.get('tab');
 
   useEffect(() => {
     fetchData();
@@ -227,9 +241,19 @@ const OmraGroupDetails = () => {
   const groupePaiements = paiements;
   const groupePaiementsCommissions = paiementsCommissions;
 
-  const [activeTab, setActiveTab] = useState('enregistrements'); // enregistrements | chambres | paiements | commissions | finance
+  const [activeTab, setActiveTab] = useState(urlTab || 'enregistrements'); // enregistrements | vueliste | chambres | paiements | commissions | finance | checklist
   const [activeListHotelId, setActiveListHotelId] = useState('');
   const [pelerinsMaster, setPelerinsMaster] = useState([]);
+
+  useEffect(() => {
+    if (urlTab && ['enregistrements', 'vueliste', 'chambres', 'paiements', 'commissions', 'finance', 'checklist'].includes(urlTab)) {
+      setActiveTab(urlTab);
+    }
+  }, [urlTab]);
+
+  const handleUpdateGroup = (updatedGroup) => {
+    setGroupes(prev => prev.map(g => g.id === updatedGroup.id ? updatedGroup : g));
+  };
 
   // Modal Fiche Pèlerin (Sous-modale depuis le formulaire d'enregistrement)
   const [isPelerinDetailModalOpen, setIsPelerinDetailModalOpen] = useState(false);
@@ -1176,7 +1200,9 @@ const OmraGroupDetails = () => {
       totalBrut,
       totalCommission: totalCommission,
       totalNet,
-      dateCreation: formData.dateCreation || new Date().toISOString()
+      dateCreation: formData.dateCreation || new Date().toISOString(),
+      createdBy: editingId ? undefined : (user?.id || null),
+      createdByName: editingId ? undefined : (profile?.nom || user?.email?.split('@')[0] || 'Admin')
     };
 
     const payload = mapCamelToEnregistrement(record, intermediaires);
@@ -1559,6 +1585,9 @@ const OmraGroupDetails = () => {
         alert("Veuillez saisir un montant supérieur à 0.");
         return;
       }
+      const creatorId = user?.id || null;
+      const creatorName = profile?.nom || user?.email?.split('@')[0] || 'Admin';
+
       const montantDZD = isForeign ? totalOrig * Number(paymentFormData.tauxChange) : totalOrig;
       const resteGlobal = Math.max(0, (enr.totalNet || 0) - getEnregistrementPaid(enr.id, idsToReplace));
       if (montantDZD > resteGlobal + 0.01) {
@@ -1575,9 +1604,14 @@ const OmraGroupDetails = () => {
         devise: paymentFormData.devise,
         taux_change: rate,
         montant_dzd: montantDZD,
-        paiement_rabatteur: paymentFormData.paiementRabatteur
+        paiement_rabatteur: paymentFormData.paiementRabatteur,
+        created_by: creatorId,
+        created_by_name: creatorName
       });
     } else if (paymentFormData.splitMode === 'custom') {
+      const creatorId = user?.id || null;
+      const creatorName = profile?.nom || user?.email?.split('@')[0] || 'Admin';
+
       let totalSum = 0;
       for (const m of selected) {
         const amt = Number(paymentFormData.customAmounts[m.memberKey]) || 0;
@@ -1602,7 +1636,9 @@ const OmraGroupDetails = () => {
           devise: paymentFormData.devise,
           taux_change: rate,
           montant_dzd: montantDZD,
-          paiement_rabatteur: paymentFormData.paiementRabatteur
+          paiement_rabatteur: paymentFormData.paiementRabatteur,
+          created_by: creatorId,
+          created_by_name: creatorName
         });
       }
       if (totalSum <= 0) {
@@ -1610,6 +1646,9 @@ const OmraGroupDetails = () => {
         return;
       }
     } else {
+      const creatorId = user?.id || null;
+      const creatorName = profile?.nom || user?.email?.split('@')[0] || 'Admin';
+
       const totalOrig = Number(paymentFormData.montantOriginal) || 0;
       if (totalOrig <= 0) {
         alert("Veuillez saisir un montant supérieur à 0.");
@@ -1634,7 +1673,9 @@ const OmraGroupDetails = () => {
           devise: paymentFormData.devise,
           taux_change: rate,
           montant_dzd: montantDZDPerMember,
-          paiement_rabatteur: paymentFormData.paiementRabatteur
+          paiement_rabatteur: paymentFormData.paiementRabatteur,
+          created_by: creatorId,
+          created_by_name: creatorName
         });
       }
     }
@@ -1712,7 +1753,9 @@ const OmraGroupDetails = () => {
     const record = {
       ...commissionFormData,
       groupeId: id,
-      montant: Number(commissionFormData.montant)
+      montant: Number(commissionFormData.montant),
+      createdBy: editingCommissionId ? undefined : (user?.id || null),
+      createdByName: editingCommissionId ? undefined : (profile?.nom || user?.email?.split('@')[0] || 'Admin')
     };
     
     const payload = mapCamelToCommission(record, intermediaires);
@@ -2236,6 +2279,7 @@ const OmraGroupDetails = () => {
     { id: 'paiements', label: 'Historique Paiements', icon: CreditCard },
     { id: 'commissions', label: 'Commissions', icon: User },
     { id: 'finance', label: 'Bilan Financier', icon: Wallet },
+    { id: 'checklist', label: 'Checklist Vol', icon: CheckSquare },
   ];
 
   return (
@@ -2251,7 +2295,12 @@ const OmraGroupDetails = () => {
               >
                 <ArrowLeft size={14} /> Retour aux groupes
               </button>
-              <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight mb-2">{groupe.nom}</h1>
+              <div className="flex items-center gap-3 flex-wrap mb-2">
+                <span className="px-3 py-1 bg-emerald-500/20 text-emerald-300 border border-emerald-400/30 rounded-lg text-sm font-mono font-bold tracking-wider">
+                  {groupe.code || 'OMRAETV001/1448'}
+                </span>
+                <h1 className="text-2xl md:text-3xl font-extrabold tracking-tight">{groupe.nom}</h1>
+              </div>
               <div className="flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-white/70">
                 <span className="flex items-center gap-1.5"><Plane size={14} /> {groupe.compagnie}</span>
                 <span className="flex items-center gap-1.5"><Calendar size={14} /> {groupe.date_depart || '-'} → {groupe.date_retour || '-'}</span>
@@ -3245,6 +3294,16 @@ const OmraGroupDetails = () => {
               </Card>
             </div>
           </div>
+        )}
+
+        {/* ── Tab Content: Checklist Vol ── */}
+        {activeTab === 'checklist' && (
+          <OmraGroupChecklistTab 
+            groupe={groupe} 
+            onUpdateGroup={handleUpdateGroup} 
+            agencySettings={agencySettings} 
+            isAdmin={isAdmin} 
+          />
         )}
         
         {/* ── Modal Enregistrement ───────────────────────────────────── */}
@@ -4517,23 +4576,22 @@ const OmraGroupDetails = () => {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={isAddingClient} onOpenChange={setIsAddingClient}>
-        <DialogContent className="max-w-3xl p-0" onClose={() => setIsAddingClient(false)}>
-          <ClientForm 
-            onClose={() => setIsAddingClient(false)} 
-            onSave={async (newClient) => {
-              const { data, error } = await supabase.from('clients').insert([newClient]).select();
-              if (error) {
-                alert("Erreur: " + error.message);
-              } else if (data) {
-                setClients(prev => [...prev, data[0]]);
-                handleSelectClient(data[0]);
-                setIsAddingClient(false);
-              }
-            }} 
-          />
-        </DialogContent>
-      </Dialog>
+      {isAddingClient && (
+        <ClientForm 
+          onClose={() => setIsAddingClient(false)} 
+          onSave={async (newClient) => {
+            const { data, error } = await supabase.from('clients').insert([newClient]).select();
+            if (error) {
+              alert("Erreur: " + error.message);
+            } else if (data && data.length > 0) {
+              const created = data[0];
+              setClients(prev => [...prev, created]);
+              handleSelectClient(created);
+              setIsAddingClient(false);
+            }
+          }} 
+        />
+      )}
     </Layout>
   );
 };

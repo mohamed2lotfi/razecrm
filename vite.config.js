@@ -10,7 +10,10 @@ export default defineConfig({
     },
   },
   server: {
-    host: '0.0.0.0',
+    host: '0.0.0.0',   // Binds to all local network IPs safely
+    port: 5173,        // Locks the port to 5173
+    strictPort: true,  // Crashes instead of quietly switching to 5174 if the port is busy
+    allowedHosts: true, // Allows accessing via elmokhtar.crm and other local hostnames
     watch: {
       ignored: ['**/siteweb/**', '**/backend/**', '**/dist/**']
     }

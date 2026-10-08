@@ -22,6 +22,8 @@ import Packages from '@/pages/Packages';
 import SimulateurDevis from '@/pages/SimulateurDevis';
 import Profile from '@/pages/Profile';
 import WebsiteManagement from '@/pages/WebsiteManagement';
+import Telex from '@/pages/Telex';
+import OmraTracking from '@/pages/OmraTracking';
 
 const RoleRoute = ({ children, allowedRoles = ['admin', 'agent'] }) => {
   const { session, role } = useAuth();
@@ -59,6 +61,8 @@ function App() {
           <Route path="/packages" element={<RoleRoute allowedRoles={['admin', 'agent']}><Packages /></RoleRoute>} />
           <Route path="/clients" element={<RoleRoute allowedRoles={['admin', 'agent']}><Clients /></RoleRoute>} />
           <Route path="/documents" element={<RoleRoute allowedRoles={['admin', 'agent']}><Documents /></RoleRoute>} />
+          <Route path="/telex" element={<RoleRoute allowedRoles={['admin', 'agent']}><Telex /></RoleRoute>} />
+          <Route path="/billets-telex" element={<RoleRoute allowedRoles={['admin', 'agent']}><Telex /></RoleRoute>} />
           <Route path="/facturation" element={<RoleRoute allowedRoles={['admin', 'agent']}><Facturation /></RoleRoute>} />
           <Route path="/visas" element={<RoleRoute allowedRoles={['admin', 'agent']}><Visas /></RoleRoute>} />
           <Route path="/banque-contacts" element={<RoleRoute allowedRoles={['admin', 'agent']}><BanqueContacts /></RoleRoute>} />
@@ -66,6 +70,7 @@ function App() {
           <Route path="/website" element={<RoleRoute allowedRoles={['admin', 'agent']}><WebsiteManagement /></RoleRoute>} />
           
           {/* Routes Administratives & Financières (Admin Uniquement) */}
+          <Route path="/omra/tracking" element={<RoleRoute allowedRoles={['admin']}><OmraTracking /></RoleRoute>} />
           <Route path="/outcomes" element={<RoleRoute allowedRoles={['admin']}><Outcomes /></RoleRoute>} />
           <Route path="/reports" element={<RoleRoute allowedRoles={['admin']}><Rapports /></RoleRoute>} />
           <Route path="/rh" element={<RoleRoute allowedRoles={['admin']}><RH /></RoleRoute>} />
