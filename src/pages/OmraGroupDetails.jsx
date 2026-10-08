@@ -552,6 +552,7 @@ const OmraGroupDetails = () => {
     hotelId: '',
     typeChambre: '',
     chambreId: '',
+    dateCreation: new Date().toISOString().split('T')[0],
     pelerins: [],
     enfantsSansLit: [],
     intermediaire: '',
@@ -885,6 +886,7 @@ const OmraGroupDetails = () => {
   ]);
   const paxEnregistres = allPelerins.length;
   const paxTotal = Number(groupe.nbr_places) || 0;
+  const placesRestantes = Math.max(0, paxTotal - paxEnregistres);
   const paxHommes = allPelerins.filter(p => p.sexe === 'H').length;
   const paxFemmes = allPelerins.filter(p => p.sexe === 'F').length;
   const nbrChd = allPelerins.filter(p => p.chd).length;
@@ -1095,6 +1097,7 @@ const OmraGroupDetails = () => {
     setExistingOccupants(otherOccupants);
     setFormData({
       ...enr,
+      dateCreation: enr.dateCreation ? (enr.dateCreation.includes('T') ? enr.dateCreation.split('T')[0] : enr.dateCreation) : new Date().toISOString().split('T')[0],
       enfantsSansLit: enr.enfantsSansLit || [],
     });
 
@@ -1200,7 +1203,7 @@ const OmraGroupDetails = () => {
       totalBrut,
       totalCommission: totalCommission,
       totalNet,
-      dateCreation: formData.dateCreation || new Date().toISOString(),
+      dateCreation: formData.dateCreation ? (formData.dateCreation.includes('T') ? formData.dateCreation : new Date(formData.dateCreation).toISOString()) : new Date().toISOString(),
       createdBy: editingId ? undefined : (user?.id || null),
       createdByName: editingId ? undefined : (profile?.nom || user?.email?.split('@')[0] || 'Admin')
     };
@@ -1813,9 +1816,23 @@ const OmraGroupDetails = () => {
   };
   const getHotelName = (hId) => {
     if (!hId) return 'Hôtel non défini';
-    const h = hotels.find(x => x.id === hId || x.nom === hId || (typeof hId === 'string' && hId.startsWith(x.nom)));
+    const h = hotels.find(x => 
+      x.id === hId || 
+      x.nom === hId || 
+      (typeof hId === 'string' && (x.id?.toString() === hId.toString() || hId.startsWith(x.nom) || x.nom.startsWith(hId)))
+    );
     if (h) return h.nom;
-    return typeof hId === 'string' ? hId.replace(/undefined\s*étoiles/gi, '').trim() : hId;
+
+    const grpHotel = groupe?.hotels?.find(gh => gh.hotelId === hId || gh.id === hId);
+    if (grpHotel) {
+      const matchInHotels = hotels.find(x => x.id === grpHotel.hotelId || x.nom === grpHotel.hotelId);
+      if (matchInHotels) return matchInHotels.nom;
+      if (grpHotel.nom) return grpHotel.nom;
+      if (grpHotel.hotelNom) return grpHotel.hotelNom;
+      if (grpHotel.location) return `Hôtel ${grpHotel.location}`;
+    }
+
+    return typeof hId === 'string' ? hId.replace(/undefined\s*étoiles/gi, '').trim() : (hId || 'Hôtel');
   };
 
   const handleUpdateRoomName = async (oldRoomId, occupantsInRoom) => {
@@ -1920,9 +1937,73 @@ const OmraGroupDetails = () => {
     ? Number((totalResteSelectedDZD / Number(paymentFormData.tauxChange)).toFixed(2))
     : totalResteSelectedDZD;
 
+  const getGroupedRoomsForHotel = (hotelId) => {
+    const hotelEnregistrements = groupeEnregistrements.filter(e => !hotelId || e.hotelId === hotelId);
+    const roomsMap = new Map();
+
+    hotelEnregistrements.forEach((enr) => {
+      const financialMembers = getEnregistrementMembersFinancials(enr);
+      financialMembers.forEach((m) => {
+        const rawRoomId = m.rawPelerin?.chambreId || enr.chambreId || enr.id;
+        const roomKey = String(rawRoomId);
+
+        if (!roomsMap.has(roomKey)) {
+          let displayTitle = '';
+          const isEnrIdOrTimestamp = roomKey === String(enr.id) || /^\d{12,}$/.test(roomKey) || /^[0-9a-f]{8}-[0-9a-f]{4}/i.test(roomKey);
+
+          if (isEnrIdOrTimestamp) {
+            displayTitle = 'Non attribuée';
+          } else if (/^\d+$/.test(roomKey)) {
+            displayTitle = `Chambre N°${roomKey}`;
+          } else if (/^chambre/i.test(roomKey)) {
+            displayTitle = roomKey;
+          } else {
+            displayTitle = `Chambre N°${roomKey}`;
+          }
+
+          roomsMap.set(roomKey, {
+            roomKey,
+            displayTitle,
+            typeChambre: enr.typeChambre || 'CH4',
+            hotelId: enr.hotelId,
+            members: []
+          });
+        }
+
+        roomsMap.get(roomKey).members.push({
+          ...m,
+          enrId: enr.id,
+          enr: enr
+        });
+      });
+    });
+
+    return Array.from(roomsMap.values()).sort((a, b) => {
+      const extractNum = (str) => {
+        if (/^\d{12,}$/.test(str)) return null;
+        const match = String(str).match(/\d+/);
+        return match ? parseInt(match[0], 10) : null;
+      };
+
+      const numA = extractNum(a.roomKey);
+      const numB = extractNum(b.roomKey);
+
+      if (numA !== null && numB !== null) {
+        return numA - numB;
+      }
+      if (numA !== null) return -1;
+      if (numB !== null) return 1;
+
+      if (a.displayTitle === 'Non attribuée') return 1;
+      if (b.displayTitle === 'Non attribuée') return -1;
+
+      return a.displayTitle.localeCompare(b.displayTitle);
+    });
+  };
+
   const handlePrintVueListe = () => {
     const currentHotelId = activeListHotelId || groupe?.hotels?.[0]?.hotelId;
-    const hotelEnregistrements = groupeEnregistrements.filter(e => e.hotelId === currentHotelId);
+    const sortedRooms = getGroupedRoomsForHotel(currentHotelId);
     const currentHotelName = getHotelName(currentHotelId);
 
     const exportDate = new Date().toLocaleDateString('fr-FR', {
@@ -1938,10 +2019,8 @@ const OmraGroupDetails = () => {
     let totalResteSum = 0;
     let totalPaxCount = 0;
 
-    const rows = hotelEnregistrements.map((enr) => {
-      const financialMembers = getEnregistrementMembersFinancials(enr);
-
-      return financialMembers.map((m, index) => {
+    const rows = sortedRooms.map((room) => {
+      return room.members.map((m, index) => {
         totalPaxCount++;
         totalTarifLitSum += m.tarifLit || 0;
         totalRestoSum += m.extraCosts || 0;
@@ -1958,9 +2037,9 @@ const OmraGroupDetails = () => {
         if (m.guide) tags.push('<span class="tag tag-blue">Guide</span>');
 
         const roomCell = index === 0 ? `
-          <td rowspan="${financialMembers.length}" class="room-cell">
-            <div class="room-num">${enr.chambreId ? 'Chambre N°' + enr.chambreId : 'Non attribuée'}</div>
-            <div class="room-type">${enr.typeChambre || '—'}</div>
+          <td rowspan="${room.members.length}" class="room-cell">
+            <div class="room-num">${room.displayTitle}</div>
+            <div class="room-type">${room.typeChambre || '—'}</div>
           </td>
         ` : '';
 
@@ -1971,10 +2050,10 @@ const OmraGroupDetails = () => {
               <div class="pax-name">${m.nom || '—'}</div>
               ${tags.length > 0 ? `<div class="tags-row">${tags.join(' ')}</div>` : ''}
             </td>
-            <td style="text-align: center; font-weight: 600;">${m.sexe || 'H'}</td>
+            <td style="text-align: center; font-weight: 600;">${m.sexe === 'F' ? 'F' : 'M'}</td>
             <td style="text-align: right;">${fmtDZD(m.tarifLit || 0)}</td>
             <td style="text-align: right; color: #ea580c; font-weight: 500;">${(m.extraCosts || 0) > 0 ? fmtDZD(m.extraCosts) : '0,00'}</td>
-            <td style="text-align: right; color: #d97706;">${(m.reduction || 0) > 0 ? '-' + fmtDZD(m.reduction) : '0,00'}</td>
+            <td style="text-align: right;">${(m.reduction || 0) > 0 ? fmtDZD(m.reduction) : '0,00'}</td>
             <td style="text-align: right; color: #6b7280;">${(m.commission || 0) > 0 ? fmtDZD(m.commission) : '0,00'}</td>
             <td style="text-align: right; font-weight: 700; color: #1d4ed8; background-color: #eff6ff;">${fmtDZD(m.totalDu || 0)}</td>
             <td style="text-align: right; font-weight: 700; color: #059669; background-color: #f0fdf4;">${fmtDZD(m.totalPaye || 0)}</td>
@@ -2341,6 +2420,13 @@ const OmraGroupDetails = () => {
             </div>
             <div className="w-px h-8 bg-white/10" />
             <div>
+              <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Places Restantes</p>
+              <p className={cn("text-2xl font-extrabold", placesRestantes > 0 ? "text-emerald-300" : "text-red-300")}>
+                {placesRestantes}
+              </p>
+            </div>
+            <div className="w-px h-8 bg-white/10" />
+            <div>
               <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Hommes</p>
               <p className="text-2xl font-extrabold text-blue-200">{paxHommes}</p>
             </div>
@@ -2375,28 +2461,6 @@ const OmraGroupDetails = () => {
                 <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Reste</p>
                 <p className="text-lg md:text-xl font-extrabold text-red-400">{fmtDZD(grandTotalRestant)}</p>
               </div>
-            </div>
-            
-            <div className="w-px h-8 bg-white/10 hidden xl:block" />
-            
-            {/* Nouveau Bloc : Total Compagnie */}
-            <div className="hidden xl:block">
-              <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Total Dû Comp. Aérienne</p>
-              <p className="text-xl font-bold text-sky-400">{fmtDZD(totalDueCompagnie)} <span className="text-sm font-normal text-sky-400/50">DZD</span></p>
-            </div>
-            <div className="w-px h-8 bg-white/10 hidden xl:block" />
-            
-            {/* Nouveau Bloc : Dépenses et Marge */}
-            <div className="hidden xl:block">
-              <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Total Dépenses (Prorata)</p>
-              <p className="text-xl font-bold text-orange-400">{fmtDZD(grandTotalDepenses)} <span className="text-sm font-normal text-orange-400/50">DZD</span></p>
-            </div>
-            <div className="w-px h-8 bg-white/10 hidden xl:block" />
-            <div className="hidden xl:block">
-              <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Marge Nette</p>
-              <p className={cn("text-xl font-bold", margeNette >= 0 ? "text-emerald-400" : "text-destructive")}>
-                {fmtDZD(margeNette)} <span className={cn("text-sm font-normal", margeNette >= 0 ? "text-emerald-400/50" : "text-destructive/50")}>DZD</span>
-              </p>
             </div>
           </div>
         </div>
@@ -2457,10 +2521,17 @@ const OmraGroupDetails = () => {
                       return (
                         <tr key={enr.id} className="hover:bg-muted/20 transition-colors group">
                           <td className="px-5 py-4 align-top">
-                            <p className="font-semibold text-foreground">{enr.hotelId}</p>
-                            <span className="inline-flex items-center gap-1 mt-1 text-[10px] font-bold uppercase tracking-wider text-primary bg-primary/8 px-2 py-0.5 rounded-full">
-                              <Building2 size={10} /> {enr.typeChambre}
-                            </span>
+                            <p className="font-semibold text-foreground">{getHotelName(enr.hotelId)}</p>
+                            <div className="flex flex-wrap items-center gap-1.5 mt-1">
+                              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider text-primary bg-primary/8 px-2 py-0.5 rounded-full">
+                                <Building2 size={10} /> {enr.typeChambre}
+                              </span>
+                              {enr.dateCreation && (
+                                <span className="inline-flex items-center gap-1 text-[10px] font-medium text-muted-foreground bg-muted/60 px-2 py-0.5 rounded-full" title="Date d'enregistrement">
+                                  <Calendar size={10} /> {new Date(enr.dateCreation).toLocaleDateString('fr-FR')}
+                                </span>
+                              )}
+                            </div>
                           </td>
                           <td className="px-5 py-4 align-top">
                             <div className="flex flex-col gap-1.5">
@@ -2574,85 +2645,110 @@ const OmraGroupDetails = () => {
               </Button>
             </div>
             
-            <Card className="overflow-hidden border-0 shadow-lg ring-1 ring-black/5 bg-white">
+            <Card className="overflow-hidden border border-gray-200 shadow-sm bg-white rounded-xl">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left border-collapse">
-                  <thead className="bg-gray-100 text-gray-700 text-xs uppercase font-bold border-b-2 border-gray-300">
+                  <thead className="bg-gray-50/80 text-gray-700 text-xs uppercase font-bold border-b border-gray-200">
                     <tr>
-                      <th className="px-4 py-3 border border-gray-200">Chambre</th>
-                      <th className="px-4 py-3 border border-gray-200">Nom</th>
-                      <th className="px-4 py-3 border border-gray-200 text-center">Genre</th>
-                      <th className="px-4 py-3 border border-gray-200 text-right">Tarif Lit</th>
-                      <th className="px-4 py-3 border border-gray-200 text-right text-orange-600">Tarif Restau</th>
-                      <th className="px-4 py-3 border border-gray-200 text-right">Réduction</th>
-                      <th className="px-4 py-3 border border-gray-200 text-right">Commission</th>
-                      <th className="px-4 py-3 border border-gray-200 text-right text-blue-700">Total Dû</th>
-                      <th className="px-4 py-3 border border-gray-200 text-right text-emerald-700">Total Payé</th>
-                      <th className="px-4 py-3 border border-gray-200 text-right text-red-600">Reste</th>
-                      <th className="px-4 py-3 border border-gray-200 text-center">Etat</th>
-                      {isAdmin && <th className="px-3 py-3 border border-gray-200 text-center w-12">Actions</th>}
+                      <th className="px-4 py-3 border border-gray-200 text-center font-bold tracking-wider">CHAMBRE</th>
+                      <th className="px-4 py-3 border border-gray-200 text-left font-bold tracking-wider">NOM</th>
+                      <th className="px-4 py-3 border border-gray-200 text-center font-bold tracking-wider">GENRE</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right font-bold tracking-wider">TARIF LIT</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right font-bold tracking-wider text-orange-600">TARIF RESTAU</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right font-bold tracking-wider">RÉDUCTION</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right font-bold tracking-wider">COMMISSION</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right font-bold tracking-wider text-blue-600">TOTAL DÛ</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right font-bold tracking-wider text-emerald-600">TOTAL PAYÉ</th>
+                      <th className="px-4 py-3 border border-gray-200 text-right font-bold tracking-wider text-red-500">RESTE</th>
+                      <th className="px-4 py-3 border border-gray-200 text-center font-bold tracking-wider">ETAT</th>
+                      {isAdmin && <th className="px-3 py-3 border border-gray-200 text-center font-bold tracking-wider w-14">ACTIONS</th>}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {(() => {
                       const currentHotelId = activeListHotelId || groupe.hotels?.[0]?.hotelId;
-                      const hotelEnregistrements = groupeEnregistrements.filter(e => e.hotelId === currentHotelId);
+                      const sortedRooms = getGroupedRoomsForHotel(currentHotelId);
                       
-                      if (hotelEnregistrements.length === 0) {
+                      if (sortedRooms.length === 0) {
                         return (
                           <tr>
-                            <td colSpan={isAdmin ? 12 : 11} className="px-4 py-8 text-center text-gray-500">Aucun enregistrement pour cet hôtel.</td>
+                            <td colSpan={isAdmin ? 12 : 11} className="px-4 py-12 text-center text-gray-500">
+                              <div className="text-4xl mb-2 opacity-20">🏨</div>
+                              <p className="font-medium">Aucun enregistrement pour cet hôtel.</p>
+                            </td>
                           </tr>
                         );
                       }
 
-                      return hotelEnregistrements.map((enr, iEnr) => {
-                        const financialMembers = getEnregistrementMembersFinancials(enr);
+                      return sortedRooms.map((room) => {
+                        return room.members.map((m, index) => {
+                          const isPaid = m.reste <= 0;
+                          const isVersement = !isPaid && m.totalPaye > 0;
 
-                        return financialMembers.map((m, index) => {
                           return (
-                            <tr key={`${enr.id}-${index}`} className="hover:bg-gray-50 transition-colors">
+                            <tr key={`${room.roomKey}-${m.enrId}-${index}`} className="hover:bg-gray-50/70 transition-colors">
                               {index === 0 && (
-                                <td rowSpan={financialMembers.length} className="px-4 py-3 border border-gray-200 font-bold align-middle text-center bg-gray-50">
-                                  <div>{enr.chambreId ? `Chambre N°${enr.chambreId}` : 'Non attribuée'}</div>
-                                  <div className="text-xs font-medium text-gray-500 mt-0.5">{enr.typeChambre}</div>
+                                <td rowSpan={room.members.length} className="px-4 py-3 border border-gray-200 font-bold align-middle text-center bg-white">
+                                  <div className="font-extrabold text-gray-900 text-sm tracking-tight">{room.displayTitle}</div>
+                                  <div className="text-xs font-semibold text-gray-400 tracking-wider mt-0.5 uppercase">{room.typeChambre || 'CH4'}</div>
                                 </td>
                               )}
-                              <td className="px-4 py-2 border border-gray-200 font-medium">
+                              <td className="px-4 py-2.5 border border-gray-200 font-medium text-gray-900 align-middle">
                                 <div className="flex items-center gap-2 flex-wrap">
                                   <span>{m.nom}</span>
                                   {m.isEnfantSansLit && (
-                                    <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[9px] font-bold rounded uppercase">Sans Lit</span>
+                                    <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded">Sans Lit</span>
                                   )}
                                   {m.chd && !m.isEnfantSansLit && (
-                                    <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 text-[9px] font-bold rounded uppercase">CHD</span>
+                                    <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold rounded">CHD</span>
                                   )}
                                   {m.restauration && (
-                                    <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[9px] font-bold rounded uppercase">Resto</span>
+                                    <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[10px] font-bold rounded">Resto</span>
                                   )}
                                   {m.guide && (
-                                    <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[9px] font-bold rounded uppercase">Guide</span>
+                                    <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded">Guide</span>
                                   )}
                                 </div>
                               </td>
-                              <td className="px-4 py-2 border border-gray-200 text-center">{m.sexe || 'H'}</td>
-                              <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(m.tarifLit || 0)}</td>
-                              <td className="px-4 py-2 border border-gray-200 text-right text-orange-600 font-medium">{fmtDZD(m.extraCosts || 0)}</td>
-                              <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(m.reduction || 0)}</td>
-                              <td className="px-4 py-2 border border-gray-200 text-right">{fmtDZD(m.commission || 0)}</td>
-                              <td className="px-4 py-2 border border-gray-200 text-right font-bold text-blue-700 bg-blue-50/30">{fmtDZD(m.totalDu || 0)}</td>
-                              <td className="px-4 py-2 border border-gray-200 text-right font-bold text-emerald-700 bg-emerald-50/30">{fmtDZD(m.totalPaye || 0)}</td>
-                              <td className="px-4 py-2 border border-gray-200 text-right font-bold text-red-600 bg-red-50/30">{fmtDZD(m.reste || 0)}</td>
-                              <td className={cn("px-4 py-2 border border-gray-200 text-center font-bold text-xs uppercase tracking-wider", m.etatColor)}>
-                                {m.etat}
+                              <td className="px-3 py-2.5 border border-gray-200 text-center text-gray-700 font-medium align-middle">
+                                {m.sexe === 'F' ? 'F' : 'M'}
+                              </td>
+                              <td className="px-4 py-2.5 border border-gray-200 text-right font-medium text-gray-800 align-middle">
+                                {fmtDZD(m.tarifLit || 0)}
+                              </td>
+                              <td className="px-4 py-2.5 border border-gray-200 text-right font-medium text-gray-800 align-middle">
+                                {fmtDZD(m.extraCosts || 0)}
+                              </td>
+                              <td className="px-4 py-2.5 border border-gray-200 text-right font-medium text-gray-800 align-middle">
+                                {fmtDZD(m.reduction || 0)}
+                              </td>
+                              <td className="px-4 py-2.5 border border-gray-200 text-right font-medium text-gray-800 align-middle">
+                                {fmtDZD(m.commission || 0)}
+                              </td>
+                              <td className="px-4 py-2.5 border border-gray-200 text-right font-bold text-blue-600 align-middle">
+                                {fmtDZD(m.totalDu || 0)}
+                              </td>
+                              <td className="px-4 py-2.5 border border-gray-200 text-right font-bold text-emerald-600 align-middle">
+                                {fmtDZD(m.totalPaye || 0)}
+                              </td>
+                              <td className="px-4 py-2.5 border border-gray-200 text-right font-bold text-red-500 align-middle">
+                                {fmtDZD(m.reste || 0)}
+                              </td>
+                              <td className={cn(
+                                "px-3 py-2.5 border border-gray-200 text-center font-bold text-xs uppercase tracking-wider align-middle",
+                                isPaid ? "bg-emerald-600 text-white" :
+                                isVersement ? "bg-amber-500 text-white" :
+                                "bg-rose-500 text-white"
+                              )}>
+                                {isPaid ? 'PAYÉ' : isVersement ? 'VERSEMENT' : 'NON PAYÉ'}
                               </td>
                               {isAdmin && (
-                                <td className="px-3 py-2 border border-gray-200 text-center align-middle">
+                                <td className="px-2 py-2 border border-gray-200 text-center align-middle">
                                   <Button
                                     variant="ghost"
                                     size="icon-sm"
-                                    onClick={() => handleDeletePelerinFromGroup(enr.id, m.rawPelerin || m, m.isEnfantSansLit)}
-                                    className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                    onClick={() => handleDeletePelerinFromGroup(m.enrId, m.rawPelerin || m, m.isEnfantSansLit)}
+                                    className="h-7 w-7 text-red-400 hover:text-red-600 hover:bg-red-50 border border-transparent hover:border-red-200 mx-auto"
                                     title="Supprimer ce pèlerin"
                                   >
                                     <Trash2 size={13} />
@@ -2663,7 +2759,7 @@ const OmraGroupDetails = () => {
                           );
                         });
                       });
-                  })()}
+                    })()}
                   </tbody>
                 </table>
               </div>
@@ -3325,8 +3421,8 @@ const OmraGroupDetails = () => {
               {/* Scrollable body */}
               <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
                 
-                {/* Hotel + Room type */}
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+                {/* Hotel + Room type + Date */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <div className="space-y-2.5">
                     <Label className="text-sm font-bold text-foreground">Hôtel <span className="text-red-500">*</span></Label>
                     {(!groupe.hotels || groupe.hotels.length === 0) ? (
@@ -3358,6 +3454,14 @@ const OmraGroupDetails = () => {
                         <option key={k} value={k}>{CHAMBRE_LABELS[k]} — {k} ({CHAMBRE_CAPACITY[k]} pers.)</option>
                       ))}
                     </Select>
+                  </div>
+                  <div className="space-y-1.5">
+                    <Label>Date d'enregistrement</Label>
+                    <Input 
+                      type="date"
+                      value={formData.dateCreation ? formData.dateCreation.split('T')[0] : ''}
+                      onChange={e => setFormData({...formData, dateCreation: e.target.value})}
+                    />
                   </div>
                 </div>
 

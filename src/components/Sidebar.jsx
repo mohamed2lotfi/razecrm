@@ -6,9 +6,10 @@ import {
   Database, KanbanSquare, Globe, ChevronDown, ChevronRight, LogOut,
   TrendingDown, FileBarChart, Scan, Briefcase, Stamp, Contact, Mail,
   ShieldCheck, UserCheck, Package, Calculator, User, Coins, PlaneTakeoff,
-  Layers
+  Layers, ChevronLeft, PanelLeftClose, PanelLeftOpen, Menu
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
+import { useSidebar } from '@/contexts/SidebarContext';
 import { supabase } from '@/lib/supabase';
 import UserAvatar from '@/components/UserAvatar';
 import AlertsBell from '@/components/AlertsBell';
@@ -50,12 +51,16 @@ const financeItems = [
   { to: '/reports', icon: FileBarChart, label: 'Rapports' },
 ];
 
-const SidebarLink = ({ to, icon: Icon, label, end }) => (
+const SidebarLink = ({ to, icon: Icon, label, end, isCollapsed }) => (
   <NavLink 
     to={to}
     end={end}
+    title={isCollapsed ? label : undefined}
     className={({ isActive }) => cn(
-      "flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-200 relative group active:scale-[0.98]",
+      "flex items-center rounded-lg text-sm font-medium transition-all duration-200 relative group active:scale-[0.98]",
+      isCollapsed 
+        ? "justify-center w-11 h-11 mx-auto my-0.5" 
+        : "gap-3 px-3 py-2.5",
       isActive 
         ? "bg-white/10 text-white shadow-sm" 
         : "text-zinc-400 hover:text-white hover:bg-white/5"
@@ -64,26 +69,37 @@ const SidebarLink = ({ to, icon: Icon, label, end }) => (
     {({ isActive }) => (
       <>
         {isActive && (
-          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[55%] bg-primary rounded-r" />
+          <div className={cn(
+            "absolute bg-primary rounded-r transition-all",
+            isCollapsed 
+              ? "left-0 top-1/2 -translate-y-1/2 w-[3px] h-[60%]" 
+              : "left-0 top-1/2 -translate-y-1/2 w-[3px] h-[55%]"
+          )} />
         )}
-        <Icon size={18} className={cn("flex-shrink-0 transition-colors", isActive ? "text-primary" : "text-zinc-500 group-hover:text-zinc-300")} />
-        <span className="truncate">{label}</span>
+        <Icon size={19} className={cn("flex-shrink-0 transition-colors", isActive ? "text-primary" : "text-zinc-500 group-hover:text-zinc-300")} />
+        {!isCollapsed && <span className="truncate">{label}</span>}
       </>
     )}
   </NavLink>
 );
 
-const SectionLabel = ({ children }) => (
-  <div className="px-3 pt-5 pb-2 text-[10px] uppercase tracking-widest font-bold text-slate-600">
-    {children}
-  </div>
-);
+const SectionLabel = ({ children, isCollapsed }) => {
+  if (isCollapsed) {
+    return <div className="w-8 h-px bg-white/10 my-2.5 mx-auto" />;
+  }
+  return (
+    <div className="px-3 pt-5 pb-2 text-[10px] uppercase tracking-widest font-bold text-slate-500 truncate">
+      {children}
+    </div>
+  );
+};
 
 const Sidebar = () => {
   const [groupes, setGroupes] = useState([]);
   const location = useLocation();
   const navigate = useNavigate();
   const { signOut, user, profile, isAdmin } = useAuth();
+  const { isCollapsed, toggleSidebar } = useSidebar();
   
   const isOmraActive = location.pathname.startsWith('/omra');
   const [isOmraOpen, setIsOmraOpen] = useState(isOmraActive);
@@ -98,10 +114,10 @@ const Sidebar = () => {
 
   // Keep accordion open if we are in an omra route
   useEffect(() => {
-    if (isOmraActive) {
+    if (isOmraActive && !isCollapsed) {
       setIsOmraOpen(true);
     }
-  }, [isOmraActive]);
+  }, [isOmraActive, isCollapsed]);
 
   const handleLogout = async () => {
     try {
@@ -115,183 +131,266 @@ const Sidebar = () => {
   const displayName = profile?.nom || user?.email?.split('@')[0] || 'Utilisateur';
 
   return (
-    <aside className="w-[260px] bg-sidebar fixed h-screen left-0 top-0 z-40 flex flex-col p-4 overflow-y-auto custom-scrollbar">
-      <div className="flex items-center justify-between px-2 mb-8 mt-2">
-        <div className="flex items-center gap-3 cursor-pointer group min-w-0" onClick={() => navigate('/')}>
+    <aside className={cn(
+      "bg-sidebar fixed h-screen left-0 top-0 z-40 flex flex-col overflow-y-auto custom-scrollbar transition-all duration-300 ease-in-out border-r border-white/5",
+      isCollapsed ? "w-[76px] p-2" : "w-[260px] p-4"
+    )}>
+      {/* ── Top Header & Logo ── */}
+      <div className={cn(
+        "flex items-center mb-6 mt-1 transition-all",
+        isCollapsed ? "flex-col gap-3 px-0 justify-center" : "justify-between px-2"
+      )}>
+        <div 
+          className={cn(
+            "flex items-center cursor-pointer group min-w-0",
+            isCollapsed ? "justify-center" : "gap-3"
+          )} 
+          onClick={() => navigate('/')}
+          title="EL MOKHTAR TRAVEL CRM"
+        >
           <div className="w-10 h-10 rounded-xl bg-white/10 p-1 flex items-center justify-center border border-white/15 shadow-sm overflow-hidden group-hover:scale-105 transition-transform shrink-0">
             <img src="/logo.png" alt="Agence El-Mokhtar" className="w-full h-full object-contain" />
           </div>
-          <div className="flex flex-col min-w-0">
-            <span className="text-sm font-black text-white tracking-tight leading-tight truncate">EL MOKHTAR TRAVEL</span>
-            <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold truncate">CRM</span>
-          </div>
-        </div>
-        <AlertsBell />
-      </div>
-      
-      <nav className="flex flex-col gap-0.5 flex-1">
-        {navItems.map(item => <SidebarLink key={item.to} {...item} />)}
-        
-        <SectionLabel>Modules Spéciaux</SectionLabel>
-        
-        {/* Omra Accordion */}
-        <div className="flex flex-col">
-          <div 
-            className={cn(
-              "flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 cursor-pointer relative",
-              isOmraActive && !isOmraOpen 
-                ? "bg-sidebar-active text-white" 
-                : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-            )}
-            onClick={() => {
-              if (!isOmraActive && !isOmraOpen) {
-                navigate('/omra');
-              }
-              setIsOmraOpen(!isOmraOpen);
-            }}
-          >
-            {isOmraActive && !isOmraOpen && (
-              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[55%] bg-gradient-to-b from-primary to-violet-500 rounded-r" />
-            )}
-            <div className="flex items-center gap-3">
-              <Globe size={18} className="flex-shrink-0" />
-              <span>Omra</span>
-            </div>
-            {isOmraOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
-          </div>
-
-          {/* Sub-items (Groups & Pèlerins) */}
-          {isOmraOpen && (
-            <div className="flex flex-col gap-0.5 mt-1 ml-7 border-l border-slate-700/50 pl-2">
-              <NavLink
-                to="/omra"
-                end
-                className={({ isActive }) => cn(
-                  "px-3 py-2 rounded-lg text-xs font-medium transition-colors",
-                  isActive ? "bg-sidebar-active/50 text-white font-bold" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-                )}
-              >
-                Groupes & Départs
-              </NavLink>
-              <NavLink
-                to="/omra/pelerins"
-                className={({ isActive }) => cn(
-                  "px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between",
-                  isActive ? "bg-sidebar-active/50 text-white font-bold" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-                )}
-              >
-                <span>Pèlerins</span>
-                <Users size={13} className="text-emerald-400" />
-              </NavLink>
-
-              {isAdmin && (
-                <NavLink
-                  to="/omra/tracking"
-                  className={({ isActive }) => cn(
-                    "px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between",
-                    isActive ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30" : "text-amber-400/90 hover:text-amber-300 hover:bg-amber-500/10"
-                  )}
-                >
-                  <span className="flex items-center gap-1.5 font-bold">
-                    <Layers size={13} className="text-amber-400" />
-                    Tracking Omra
-                  </span>
-                  <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">Admin</span>
-                </NavLink>
-              )}
-              {groupes.map(g => (
-                <NavLink
-                  key={g.id}
-                  to={`/omra/group/${g.id}`}
-                  className={({ isActive }) => cn(
-                    "px-3 py-2 rounded-lg text-xs font-medium transition-colors truncate",
-                    isActive ? "bg-sidebar-active/50 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
-                  )}
-                  title={g.nom}
-                >
-                  {g.nom}
-                </NavLink>
-              ))}
+          {!isCollapsed && (
+            <div className="flex flex-col min-w-0">
+              <span className="text-sm font-black text-white tracking-tight leading-tight truncate">EL MOKHTAR TRAVEL</span>
+              <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold truncate">CRM</span>
             </div>
           )}
         </div>
 
-        <SidebarLink to="/visas" icon={Stamp} label="Visas" />
-        <SidebarLink to="/packages" icon={Package} label="Packages" />
-
-        <SectionLabel>Documents</SectionLabel>
-        {docItems.map(item => <SidebarLink key={item.to} {...item} />)}
-
-        <SectionLabel>Marketing</SectionLabel>
-        {marketingItems.map(item => <SidebarLink key={item.to} {...item} />)}
+        <div className={cn("flex items-center gap-1", isCollapsed && "flex-col")}>
+          {!isCollapsed && <AlertsBell />}
+          
+          {/* Collapse / Expand Toggle Button */}
+          <button
+            type="button"
+            onClick={toggleSidebar}
+            title={isCollapsed ? "Agrandir le menu" : "Réduire le menu"}
+            className={cn(
+              "w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition-all active:scale-95",
+              isCollapsed && "mt-1"
+            )}
+          >
+            {isCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+          </button>
+        </div>
+      </div>
+      
+      {/* ── Navigation Links ── */}
+      <nav className="flex flex-col gap-0.5 flex-1">
+        {navItems.map(item => (
+          <SidebarLink key={item.to} {...item} isCollapsed={isCollapsed} />
+        ))}
         
-        <SectionLabel>Vitrine & Site Web</SectionLabel>
-        {websiteItems.map(item => <SidebarLink key={item.to} {...item} />)}
+        <SectionLabel isCollapsed={isCollapsed}>Modules Spéciaux</SectionLabel>
         
-        {/* Master Data - accessible à tous */}
-        <SectionLabel>Paramètres</SectionLabel>
-        {settingsItems.map(item => <SidebarLink key={item.to} {...item} />)}
+        {/* Omra Item / Accordion */}
+        {isCollapsed ? (
+          <NavLink
+            to="/omra"
+            title="Omra (Groupes & Pèlerins)"
+            className={({ isActive }) => cn(
+              "flex items-center justify-center w-11 h-11 mx-auto my-0.5 rounded-lg text-sm font-medium transition-all duration-200 relative group active:scale-[0.98]",
+              isOmraActive 
+                ? "bg-white/10 text-white shadow-sm" 
+                : "text-zinc-400 hover:text-white hover:bg-white/5"
+            )}
+          >
+            {isOmraActive && (
+              <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[60%] bg-primary rounded-r" />
+            )}
+            <Globe size={19} className={cn("flex-shrink-0 transition-colors", isOmraActive ? "text-primary" : "text-zinc-500 group-hover:text-zinc-300")} />
+          </NavLink>
+        ) : (
+          <div className="flex flex-col">
+            <div 
+              className={cn(
+                "flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150 cursor-pointer relative",
+                isOmraActive && !isOmraOpen 
+                  ? "bg-sidebar-active text-white" 
+                  : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+              )}
+              onClick={() => {
+                if (!isOmraActive && !isOmraOpen) {
+                  navigate('/omra');
+                }
+                setIsOmraOpen(!isOmraOpen);
+              }}
+            >
+              {isOmraActive && !isOmraOpen && (
+                <div className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-[55%] bg-gradient-to-b from-primary to-violet-500 rounded-r" />
+              )}
+              <div className="flex items-center gap-3">
+                <Globe size={18} className="flex-shrink-0" />
+                <span>Omra</span>
+              </div>
+              {isOmraOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
+            </div>
+
+            {/* Sub-items (Groups & Pèlerins) */}
+            {isOmraOpen && (
+              <div className="flex flex-col gap-0.5 mt-1 ml-7 border-l border-slate-700/50 pl-2">
+                <NavLink
+                  to="/omra"
+                  end
+                  className={({ isActive }) => cn(
+                    "px-3 py-2 rounded-lg text-xs font-medium transition-colors",
+                    isActive ? "bg-sidebar-active/50 text-white font-bold" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                  )}
+                >
+                  Groupes & Départs
+                </NavLink>
+                <NavLink
+                  to="/omra/pelerins"
+                  className={({ isActive }) => cn(
+                    "px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between",
+                    isActive ? "bg-sidebar-active/50 text-white font-bold" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                  )}
+                >
+                  <span>Pèlerins</span>
+                  <Users size={13} className="text-emerald-400" />
+                </NavLink>
+
+                {isAdmin && (
+                  <NavLink
+                    to="/omra/tracking"
+                    className={({ isActive }) => cn(
+                      "px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between",
+                      isActive ? "bg-amber-500/20 text-amber-300 font-bold border border-amber-500/30" : "text-amber-400/90 hover:text-amber-300 hover:bg-amber-500/10"
+                    )}
+                  >
+                    <span className="flex items-center gap-1.5 font-bold">
+                      <Layers size={13} className="text-amber-400" />
+                      Tracking Omra
+                    </span>
+                    <span className="text-[9px] font-black uppercase px-1.5 py-0.2 bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded">Admin</span>
+                  </NavLink>
+                )}
+                {groupes.map(g => (
+                  <NavLink
+                    key={g.id}
+                    to={`/omra/group/${g.id}`}
+                    className={({ isActive }) => cn(
+                      "px-3 py-2 rounded-lg text-xs font-medium transition-colors truncate",
+                      isActive ? "bg-sidebar-active/50 text-white" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                    )}
+                    title={g.nom}
+                  >
+                    {g.nom}
+                  </NavLink>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+
+        <SidebarLink to="/visas" icon={Stamp} label="Visas" isCollapsed={isCollapsed} />
+        <SidebarLink to="/packages" icon={Package} label="Packages" isCollapsed={isCollapsed} />
+
+        <SectionLabel isCollapsed={isCollapsed}>Documents</SectionLabel>
+        {docItems.map(item => <SidebarLink key={item.to} {...item} isCollapsed={isCollapsed} />)}
+
+        <SectionLabel isCollapsed={isCollapsed}>Marketing</SectionLabel>
+        {marketingItems.map(item => <SidebarLink key={item.to} {...item} isCollapsed={isCollapsed} />)}
+        
+        <SectionLabel isCollapsed={isCollapsed}>Vitrine & Site Web</SectionLabel>
+        {websiteItems.map(item => <SidebarLink key={item.to} {...item} isCollapsed={isCollapsed} />)}
+        
+        <SectionLabel isCollapsed={isCollapsed}>Paramètres</SectionLabel>
+        {settingsItems.map(item => <SidebarLink key={item.to} {...item} isCollapsed={isCollapsed} />)}
 
         {/* Sections Réservées aux Administrateurs */}
         {isAdmin && (
           <>
-            <SectionLabel>Ressources Humaines</SectionLabel>
-            {rhItems.map(item => <SidebarLink key={item.to} {...item} />)}
+            <SectionLabel isCollapsed={isCollapsed}>Ressources Humaines</SectionLabel>
+            {rhItems.map(item => <SidebarLink key={item.to} {...item} isCollapsed={isCollapsed} />)}
 
-            <SectionLabel>Finance</SectionLabel>
-            {financeItems.map(item => <SidebarLink key={item.to} {...item} />)}
+            <SectionLabel isCollapsed={isCollapsed}>Finance</SectionLabel>
+            {financeItems.map(item => <SidebarLink key={item.to} {...item} isCollapsed={isCollapsed} />)}
           </>
         )}
       </nav>
 
-      {/* User Info & Role Badge */}
-      <div className="mt-auto pt-4 border-t border-slate-800 flex flex-col gap-3">
-        <div 
-          onClick={() => navigate('/profil')}
-          className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-primary/40 cursor-pointer transition-all duration-200 group"
-          title="Voir et modifier mon profil"
-        >
-          <div className="flex items-center gap-2.5 min-w-0">
-            <UserAvatar 
-              user={profile || user} 
-              size="sm" 
-              showOnline={true}
-              className="ring-2 ring-white/15 group-hover:ring-primary/50 transition-all"
-            />
-            <div className="flex flex-col min-w-0">
-              <span className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors truncate">
-                {displayName}
-              </span>
-              <span className="text-[10px] text-slate-400 truncate">
-                {user?.email}
-              </span>
+      {/* ── User Info & Footer ── */}
+      <div className={cn(
+        "mt-auto pt-3 border-t border-slate-800 flex flex-col gap-2",
+        isCollapsed ? "items-center" : ""
+      )}>
+        {isCollapsed ? (
+          <>
+            <button 
+              type="button"
+              onClick={() => navigate('/profil')}
+              className="w-10 h-10 rounded-xl bg-white/5 border border-white/10 hover:bg-white/15 flex items-center justify-center transition-all cursor-pointer group"
+              title={`${displayName} (${user?.email}) - Voir profil`}
+            >
+              <UserAvatar 
+                user={profile || user} 
+                size="sm" 
+                showOnline={true}
+                className="ring-1 ring-white/20 group-hover:ring-primary/50 transition-all"
+              />
+            </button>
+            <button 
+              type="button"
+              onClick={handleLogout}
+              className="w-10 h-10 rounded-lg flex items-center justify-center text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+              title="Déconnexion"
+            >
+              <LogOut size={18} />
+            </button>
+          </>
+        ) : (
+          <>
+            <div 
+              onClick={() => navigate('/profil')}
+              className="flex items-center justify-between px-2.5 py-2 rounded-xl bg-white/5 border border-white/10 hover:bg-white/10 hover:border-primary/40 cursor-pointer transition-all duration-200 group"
+              title="Voir et modifier mon profil"
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <UserAvatar 
+                  user={profile || user} 
+                  size="sm" 
+                  showOnline={true}
+                  className="ring-2 ring-white/15 group-hover:ring-primary/50 transition-all"
+                />
+                <div className="flex flex-col min-w-0">
+                  <span className="text-xs font-bold text-slate-200 group-hover:text-white transition-colors truncate">
+                    {displayName}
+                  </span>
+                  <span className="text-[10px] text-slate-400 truncate">
+                    {user?.email}
+                  </span>
+                </div>
+              </div>
+              <div className="flex-shrink-0 ml-2">
+                {isAdmin ? (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                    <ShieldCheck size={11} /> Admin
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                    <UserCheck size={11} /> Agent
+                  </span>
+                )}
+              </div>
             </div>
-          </div>
-          <div className="flex-shrink-0 ml-2">
-            {isAdmin ? (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/30">
-                <ShieldCheck size={11} /> Admin
-              </span>
-            ) : (
-              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold bg-blue-500/20 text-blue-300 border border-blue-500/30">
-                <UserCheck size={11} /> Agent
-              </span>
-            )}
-          </div>
-        </div>
 
-        {/* Logout Button */}
-        <button 
-          onClick={handleLogout}
-          className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm font-medium text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
-        >
-          <LogOut size={16} />
-          <span>Déconnexion</span>
-        </button>
+            {/* Logout Button */}
+            <button 
+              type="button"
+              onClick={handleLogout}
+              className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-sm font-medium text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+            >
+              <LogOut size={16} />
+              <span>Déconnexion</span>
+            </button>
+          </>
+        )}
       </div>
     </aside>
   );
 };
 
 export default Sidebar;
-

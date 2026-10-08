@@ -4,7 +4,7 @@ import {
   FileText, Bus, Compass, Shield, Coins, TrendingUp, CheckCircle2, User, 
   Calendar, Layers, Tag, DollarSign, Calculator, ChevronDown, HelpCircle, 
   Package, ArrowUpRight, Check, X, CreditCard, ShieldCheck, Users, ArrowRight, Globe, MapPin,
-  Clock, FileCheck, RefreshCw, AlertCircle, BookmarkCheck
+  Clock, FileCheck, RefreshCw, AlertCircle, BookmarkCheck, Phone, MessageCircle
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -1614,41 +1614,88 @@ const VenteForm = ({ onClose, onSave, initialData }) => {
             </div>
 
             {/* ── FOOTER: BUTTON-IN-BUTTON ARCHITECTURE ────────────────────── */}
-            <div className="px-7 py-4.5 border-t border-border/80 bg-muted/20 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground font-semibold">Total Client ({paxCount} Pax) :</span>
-                <span className="text-base font-black text-foreground font-mono">
-                  {financialTotals.totalVente.toLocaleString('fr-DZ')} DZD
-                </span>
-                {paxCount > 1 && (
-                  <span className="text-xs text-muted-foreground">
-                    ({financialTotals.ventePerPax.toLocaleString('fr-DZ')} DZD / pax)
-                  </span>
-                )}
-              </div>
-              
-              <div className="flex items-center gap-2.5">
-                <Button 
-                  type="button" 
-                  variant="outline" 
-                  onClick={onClose} 
-                  className="h-10 px-5 text-xs font-bold rounded-xl"
-                >
-                  Annuler
-                </Button>
+            {(() => {
+              const clientPhone = selectedClient?.telephone || selectedClient?.tel || initialData?.telephone || initialData?.client_telephone || '';
+              const getWhatsAppUrl = (phone) => {
+                if (!phone) return null;
+                const digits = String(phone).replace(/\D/g, '');
+                if (!digits) return null;
+                let formatted = digits;
+                if (formatted.startsWith('0') && formatted.length === 10) {
+                  formatted = '213' + formatted.slice(1);
+                } else if (!formatted.startsWith('213') && formatted.length === 9) {
+                  formatted = '213' + formatted;
+                }
+                return `https://wa.me/${formatted}`;
+              };
+              const waUrl = getWhatsAppUrl(clientPhone);
 
-                {/* Primary CTA with Nested Trailing Icon */}
-                <button
-                  type="submit"
-                  className="h-10 px-6 bg-primary hover:bg-primary/90 text-primary-foreground font-extrabold text-xs rounded-xl shadow-md transition-all duration-200 flex items-center gap-3 group active:scale-[0.98]"
-                >
-                  <span>Enregistrer la Vente</span>
-                  <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center group-hover:translate-x-0.5 transition-transform">
-                    <Check size={13} className="text-white" />
+              return (
+                <div className="px-7 py-3.5 border-t border-border/80 bg-muted/20 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+                  <div className="flex items-center gap-4 flex-wrap">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground font-semibold">Total Client ({paxCount} Pax) :</span>
+                      <span className="text-base font-black text-foreground font-mono">
+                        {financialTotals.totalVente.toLocaleString('fr-DZ')} DZD
+                      </span>
+                      {paxCount > 1 && (
+                        <span className="text-xs text-muted-foreground">
+                          ({financialTotals.ventePerPax.toLocaleString('fr-DZ')} DZD / pax)
+                        </span>
+                      )}
+                    </div>
+
+                    {clientPhone && (
+                      <div className="flex items-center gap-2 pl-3 border-l border-border/80">
+                        <a 
+                          href={`tel:${clientPhone}`}
+                          className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-background border border-border text-xs font-bold text-foreground hover:text-primary hover:border-primary/40 transition-colors shadow-2xs"
+                          title="Appeler le client"
+                        >
+                          <Phone size={13} className="text-primary" />
+                          <span>{clientPhone}</span>
+                        </a>
+
+                        {waUrl && (
+                          <a
+                            href={waUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all active:scale-95"
+                            title="Contacter sur WhatsApp"
+                          >
+                            <MessageCircle size={13} />
+                            <span>WhatsApp</span>
+                          </a>
+                        )}
+                      </div>
+                    )}
                   </div>
-                </button>
-              </div>
-            </div>
+                  
+                  <div className="flex items-center gap-2.5 justify-end">
+                    <Button 
+                      type="button" 
+                      variant="outline" 
+                      onClick={onClose} 
+                      className="h-10 px-5 text-xs font-bold rounded-xl"
+                    >
+                      Annuler
+                    </Button>
+
+                    {/* Primary CTA with Nested Trailing Icon */}
+                    <button
+                      type="submit"
+                      className="h-10 px-6 bg-primary hover:bg-primary/90 text-primary-foreground font-extrabold text-xs rounded-xl shadow-md transition-all duration-200 flex items-center gap-3 group active:scale-[0.98]"
+                    >
+                      <span>Enregistrer la Vente</span>
+                      <div className="w-6 h-6 rounded-full bg-white/20 flex items-center justify-center group-hover:translate-x-0.5 transition-transform">
+                        <Check size={13} className="text-white" />
+                      </div>
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
           </form>
         )}
       </DialogContent>

@@ -73,6 +73,9 @@ const SimulateurDevis = () => {
   // Total Inf (Bébé)
   const [infTotal, setInfTotal] = useState('');
 
+  // CHD Reduction (DZD) - default 10,000 DZD
+  const [reductionChdVal, setReductionChdVal] = useState('10000');
+
   // Margin
   const [margeMode, setMargeMode] = useState('personne'); // 'personne' | 'groupe' | 'pourcentage'
   const [margeValeur, setMargeValeur] = useState('');
@@ -280,7 +283,9 @@ const SimulateurDevis = () => {
     // Unit INF price rounded to 1000 DZD
     const prixInf = inf > 0 ? round1000(costInfTotal / inf) : 0;
 
-    // Room-by-room calculation with 1,000 DZD rounding and -10k CHD rule
+    // Room-by-room calculation with 1,000 DZD rounding and configurable CHD reduction
+    const valReductionChd = reductionChdVal !== '' && !isNaN(Number(reductionChdVal)) ? Number(reductionChdVal) : 10000;
+
     const chambresCalculees = chambres.map(ch => {
       const nbLits = Number(ch.adultes || 0) + Number(ch.chd || 0);
       const chAdultes = Number(ch.adultes || 0);
@@ -294,9 +299,9 @@ const SimulateurDevis = () => {
       let prixChd = 0;
 
       if (nbLits > 0) {
-        const rawAdulte = (baseChambreHorsInf + (chChd * 10000)) / nbLits;
+        const rawAdulte = (baseChambreHorsInf + (chChd * valReductionChd)) / nbLits;
         prixAdulte = round1000(rawAdulte);
-        prixChd = Math.max(0, prixAdulte - 10000);
+        prixChd = Math.max(0, prixAdulte - valReductionChd);
       }
 
       const sousTotal = (chAdultes * prixAdulte) + (chChd * prixChd) + (chInf * prixInf);
@@ -346,7 +351,7 @@ const SimulateurDevis = () => {
         ? chambresCalculees.reduce((s, c) => s + (c.adultes * c.prixAdulte), 0) / adultes 
         : (tarifsParType[0]?.prixAdulte || 0)
     );
-    const avgPrixChd = Math.max(0, avgPrixAdulte - 10000);
+    const avgPrixChd = Math.max(0, avgPrixAdulte - valReductionChd);
 
     return {
       costBillet: round1000(costBillet),
@@ -367,7 +372,7 @@ const SimulateurDevis = () => {
   }, [
     chambres, paxCounts, billetMode, billetAdulte, billetChd, billetGroupeTotal,
     hotelTotal, visaMode, visaParPersonne, visaGroupeTotal,
-    excursionsTotal, transfertTotal, infTotal, margeMode, margeValeur
+    excursionsTotal, transfertTotal, infTotal, margeMode, margeValeur, reductionChdVal
   ]);
 
   // Generate formatted text for WhatsApp & CRM
@@ -627,7 +632,8 @@ _Offre valable sous réserve de disponibilité des places et chambres lors de la
           costItems: {
             billetMode, billetAdulte, billetChd, billetGroupeTotal,
             hotelTotal, visaMode, visaParPersonne, visaGroupeTotal,
-            excursionsTotal, transfertTotal, infTotal, margeMode, margeValeur
+            excursionsTotal, transfertTotal, infTotal, margeMode, margeValeur,
+            reductionChdVal
           }
         }
       };
@@ -670,6 +676,7 @@ _Offre valable sous réserve de disponibilité des places et chambres lors de la
       setExcursionsTotal('');
       setTransfertTotal('');
       setInfTotal('');
+      setReductionChdVal('10000');
       setMargeMode('personne');
       setMargeValeur('');
       setSelectedClientId('');
@@ -1281,7 +1288,32 @@ _Offre valable sous réserve de disponibilité des places et chambres lors de la
                   </div>
                 )}
 
-                {/* 6. Marge Agence */}
+                {/* 6. Réduction Enfant (CHD) */}
+                <div className="p-3.5 rounded-xl border-2 border-amber-200 bg-amber-50/40 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label className="text-xs font-bold text-amber-950 flex items-center gap-1.5">
+                      <Users size={15} className="text-amber-700" /> Réduction Enfant (CHD)
+                    </Label>
+                    <span className="text-[10px] font-bold text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full border border-amber-300">
+                      Défaut : 10 000 DZD
+                    </span>
+                  </div>
+                  <div>
+                    <span className="text-[10px] font-semibold text-amber-900/80 block mb-1">
+                      Montant de réduction déduit du tarif adulte pour chaque enfant CHD (DZD)
+                    </span>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="10000"
+                      value={reductionChdVal}
+                      onChange={e => setReductionChdVal(e.target.value)}
+                      className="h-9 text-xs font-bold text-amber-950 bg-white border-amber-300"
+                    />
+                  </div>
+                </div>
+
+                {/* 7. Marge Agence */}
                 <div className="p-3.5 rounded-xl border-2 border-emerald-200 bg-emerald-50/40 space-y-2.5">
                   <div className="flex items-center justify-between">
                     <Label className="text-xs font-bold text-emerald-950 flex items-center gap-1.5">

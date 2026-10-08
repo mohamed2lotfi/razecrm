@@ -4,7 +4,7 @@ import {
   Calculator, BedDouble, Plane, Building2, Stamp, MapPin, Bus, 
   Baby, Award, CheckCircle2, ChevronDown, ChevronUp, Trash2, Check, 
   RefreshCw, DollarSign, Percent, Users, FileText, Home, Flag, User, Flame,
-  Clock, Calendar, MessageSquare, ArrowUpRight, Copy, Share2, Layers, Briefcase
+  Clock, Calendar, MessageSquare, ArrowUpRight, Copy, Share2, Layers, Briefcase, Phone
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -93,6 +93,7 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
   const [simExcursionsTotal, setSimExcursionsTotal] = useState('');
   const [simTransfertTotal, setSimTransfertTotal] = useState('');
   const [simInfTotal, setSimInfTotal] = useState('');
+  const [simReductionChd, setSimReductionChd] = useState('10000');
   const [simMargeMode, setSimMargeMode] = useState('personne');
   const [simMargeValeur, setSimMargeValeur] = useState('');
 
@@ -317,6 +318,7 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
       if (c.excursionsTotal !== undefined) setSimExcursionsTotal(c.excursionsTotal);
       if (c.transfertTotal !== undefined) setSimTransfertTotal(c.transfertTotal);
       if (c.infTotal !== undefined) setSimInfTotal(c.infTotal);
+      if (c.reductionChd !== undefined) setSimReductionChd(c.reductionChd);
       if (c.margeMode) setSimMargeMode(c.margeMode);
       if (c.margeValeur !== undefined) setSimMargeValeur(c.margeValeur);
     }
@@ -337,6 +339,7 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
     setSimExcursionsTotal('');
     setSimTransfertTotal('');
     setSimInfTotal('');
+    setSimReductionChd('10000');
     setSimMargeMode('personne');
     setSimMargeValeur('');
   };
@@ -408,6 +411,8 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
 
     const prixInf = inf > 0 ? round1000(costInfTotal / inf) : 0;
 
+    const valReductionChd = simReductionChd !== '' && !isNaN(Number(simReductionChd)) ? Number(simReductionChd) : 10000;
+
     const chambresCalculees = simChambres.map(ch => {
       const nbLits = Number(ch.adultes || 0) + Number(ch.chd || 0);
       const chAdultes = Number(ch.adultes || 0);
@@ -420,9 +425,9 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
       let prixChd = 0;
 
       if (nbLits > 0) {
-        const rawAdulte = (baseChambreHorsInf + (chChd * 10000)) / nbLits;
+        const rawAdulte = (baseChambreHorsInf + (chChd * valReductionChd)) / nbLits;
         prixAdulte = round1000(rawAdulte);
-        prixChd = Math.max(0, prixAdulte - 10000);
+        prixChd = Math.max(0, prixAdulte - valReductionChd);
       }
 
       const sousTotal = (chAdultes * prixAdulte) + (chChd * prixChd) + (chInf * prixInf);
@@ -474,10 +479,9 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
   }, [
     simChambres, simPaxCounts, simBilletMode, simBilletAdulte, simBilletChd, simBilletGroupeTotal,
     simHotelTotal, simVisaMode, simVisaParPersonne, simVisaGroupeTotal,
-    simExcursionsTotal, simTransfertTotal, simInfTotal, simMargeMode, simMargeValeur
+    simExcursionsTotal, simTransfertTotal, simInfTotal, simMargeMode, simMargeValeur, simReductionChd
   ]);
 
-  // Handle Save Current Simulation in Demande
   // Handle Save Current Simulation in Demande
   const handleSaveSimulationInList = async () => {
     const simId = activeSimulationId || `sim_${Date.now()}`;
@@ -502,6 +506,7 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
         excursionsTotal: simExcursionsTotal,
         transfertTotal: simTransfertTotal,
         infTotal: simInfTotal,
+        reductionChd: simReductionChd,
         margeMode: simMargeMode,
         margeValeur: simMargeValeur
       }
@@ -1713,6 +1718,21 @@ Start the message directly with the greeting. End it with the closing phrase. No
                       />
                     </div>
 
+                    {/* Réduction CHD */}
+                    <div className="p-3 rounded-xl bg-amber-50/80 border border-amber-300 shadow-2xs space-y-1.5">
+                      <Label className="text-xs font-bold text-amber-950 flex items-center justify-between">
+                        <span className="flex items-center gap-1.5"><Users size={13} className="text-amber-700" /> Réduction CHD</span>
+                        <span className="text-[10px] text-amber-700 font-bold bg-amber-100 px-1.5 py-0.5 rounded">Défaut: 10k</span>
+                      </Label>
+                      <Input 
+                        type="number" 
+                        placeholder="10000 (DZD)" 
+                        value={simReductionChd} 
+                        onChange={e => setSimReductionChd(e.target.value)} 
+                        className="h-8 text-xs font-black bg-white border-amber-300" 
+                      />
+                    </div>
+
                     {/* Marge */}
                     <div className="p-3 rounded-xl bg-emerald-50/80 border border-emerald-300 shadow-2xs space-y-1.5">
                       <Label className="text-xs font-bold text-emerald-950 flex items-center justify-between">
@@ -1958,30 +1978,78 @@ Start the message directly with the greeting. End it with the closing phrase. No
           </div>
 
           {/* ── Dialog Footer ─────────────────────────────────────── */}
-          <div className="px-6 py-4 border-t bg-slate-50/80 flex flex-col sm:flex-row sm:items-center justify-between gap-3 shrink-0">
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-slate-500 font-medium">Statut du Devis :</span>
-              <Select
-                value={formData.status || 'nouvelle'}
-                onChange={e => setFormData(p => ({ ...p, status: e.target.value }))}
-                className="h-8 text-xs bg-white font-bold max-w-[170px]"
-              >
-                {STATUTS.map(s => (
-                  <option key={s.id} value={s.id}>{s.label}</option>
-                ))}
-              </Select>
-            </div>
+          {(() => {
+            const selectedClient = clientsList.find(c => c.id === formData.client_id);
+            const clientPhone = selectedClient?.telephone || selectedClient?.tel || prospect?.telephone || prospect?.client_telephone || '';
+            const getWhatsAppUrl = (phone) => {
+              if (!phone) return null;
+              const digits = String(phone).replace(/\D/g, '');
+              if (!digits) return null;
+              let formatted = digits;
+              if (formatted.startsWith('0') && formatted.length === 10) {
+                formatted = '213' + formatted.slice(1);
+              } else if (!formatted.startsWith('213') && formatted.length === 9) {
+                formatted = '213' + formatted;
+              }
+              return `https://wa.me/${formatted}`;
+            };
+            const waUrl = getWhatsAppUrl(clientPhone);
 
-            <div className="flex items-center gap-2 justify-end">
-              <Button type="button" variant="outline" onClick={onClose} className="h-10 px-5 text-xs font-bold">
-                Annuler
-              </Button>
-              <Button type="submit" disabled={isSaving} className="h-10 px-6 font-black text-xs gap-1.5 shadow-md">
-                {isSaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={15} />}
-                Enregistrer la Demande
-              </Button>
-            </div>
-          </div>
+            return (
+              <div className="px-6 py-3.5 border-t bg-slate-50/80 flex flex-col md:flex-row md:items-center justify-between gap-3 shrink-0">
+                <div className="flex items-center gap-4 flex-wrap">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500 font-medium">Statut :</span>
+                    <Select
+                      value={formData.status || 'nouvelle'}
+                      onChange={e => setFormData(p => ({ ...p, status: e.target.value }))}
+                      className="h-8 text-xs bg-white font-bold max-w-[170px]"
+                    >
+                      {STATUTS.map(s => (
+                        <option key={s.id} value={s.id}>{s.label}</option>
+                      ))}
+                    </Select>
+                  </div>
+
+                  {clientPhone && (
+                    <div className="flex items-center gap-2 pl-3 border-l border-slate-200">
+                      <a 
+                        href={`tel:${clientPhone}`}
+                        className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white border border-slate-200 text-xs font-bold text-slate-700 hover:text-primary hover:border-primary/40 transition-colors shadow-2xs"
+                        title="Appeler le client"
+                      >
+                        <Phone size={13} className="text-primary" />
+                        <span>{clientPhone}</span>
+                      </a>
+
+                      {waUrl && (
+                        <a
+                          href={waUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center gap-1.5 px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-bold shadow-sm transition-all active:scale-95"
+                          title="Contacter sur WhatsApp"
+                        >
+                          <MessageCircle size={13} />
+                          <span>WhatsApp</span>
+                        </a>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center gap-2 justify-end">
+                  <Button type="button" variant="outline" onClick={onClose} className="h-10 px-5 text-xs font-bold">
+                    Annuler
+                  </Button>
+                  <Button type="submit" disabled={isSaving} className="h-10 px-6 font-black text-xs gap-1.5 shadow-md">
+                    {isSaving ? <Loader2 size={14} className="animate-spin" /> : <CheckCircle2 size={15} />}
+                    Enregistrer la Demande
+                  </Button>
+                </div>
+              </div>
+            );
+          })()}
         </form>
       </DialogContent>
 
