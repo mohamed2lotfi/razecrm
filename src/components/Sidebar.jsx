@@ -138,29 +138,26 @@ const Sidebar = () => {
     )}>
       {/* ── Top Header & Logo ── */}
       <div className={cn(
-        "flex items-center mb-6 mt-1 transition-all",
-        isCollapsed ? "flex-col gap-3 px-0 justify-center" : "justify-between px-2"
+        "flex items-center mb-5 mt-1 transition-all",
+        isCollapsed ? "justify-center px-0" : "justify-between px-2"
       )}>
-        <div 
-          className={cn(
-            "flex items-center cursor-pointer group min-w-0",
-            isCollapsed ? "justify-center" : "gap-3"
-          )} 
-          onClick={() => navigate('/')}
-          title="EL MOKHTAR TRAVEL CRM"
-        >
-          <div className="w-10 h-10 rounded-xl bg-white/10 p-1 flex items-center justify-center border border-white/15 shadow-sm overflow-hidden group-hover:scale-105 transition-transform shrink-0">
-            <img src="/logo.png" alt="Agence El-Mokhtar" className="w-full h-full object-contain" />
-          </div>
-          {!isCollapsed && (
+        {!isCollapsed && (
+          <div 
+            className="flex items-center gap-3 cursor-pointer group min-w-0" 
+            onClick={() => navigate('/')}
+            title="EL MOKHTAR TRAVEL CRM"
+          >
+            <div className="w-10 h-10 rounded-xl bg-white/10 p-1 flex items-center justify-center border border-white/15 shadow-sm overflow-hidden group-hover:scale-105 transition-transform shrink-0">
+              <img src="/logo.png" alt="Agence El-Mokhtar" className="w-full h-full object-contain" />
+            </div>
             <div className="flex flex-col min-w-0">
               <span className="text-sm font-black text-white tracking-tight leading-tight truncate">EL MOKHTAR TRAVEL</span>
               <span className="text-[10px] uppercase tracking-widest text-amber-400 font-bold truncate">CRM</span>
             </div>
-          )}
-        </div>
+          </div>
+        )}
 
-        <div className={cn("flex items-center gap-1", isCollapsed && "flex-col")}>
+        <div className="flex items-center gap-1">
           {!isCollapsed && <AlertsBell />}
           
           {/* Collapse / Expand Toggle Button */}
@@ -169,11 +166,11 @@ const Sidebar = () => {
             onClick={toggleSidebar}
             title={isCollapsed ? "Agrandir le menu" : "Réduire le menu"}
             className={cn(
-              "w-8 h-8 rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition-all active:scale-95",
-              isCollapsed && "mt-1"
+              "rounded-lg flex items-center justify-center text-zinc-400 hover:text-white hover:bg-white/10 transition-all active:scale-95",
+              isCollapsed ? "w-10 h-10 bg-white/5 border border-white/10 text-zinc-300 hover:text-white" : "w-8 h-8"
             )}
           >
-            {isCollapsed ? <PanelLeftOpen size={18} /> : <PanelLeftClose size={18} />}
+            {isCollapsed ? <PanelLeftOpen size={19} /> : <PanelLeftClose size={18} />}
           </button>
         </div>
       </div>
