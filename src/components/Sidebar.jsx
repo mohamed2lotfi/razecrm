@@ -6,7 +6,7 @@ import {
   Database, KanbanSquare, Globe, ChevronDown, ChevronRight, LogOut,
   TrendingDown, FileBarChart, Scan, Briefcase, Stamp, Contact, Mail,
   ShieldCheck, UserCheck, Package, Calculator, User, Coins, PlaneTakeoff,
-  Layers, ChevronLeft, PanelLeftClose, PanelLeftOpen, Menu
+  Layers, ChevronLeft, PanelLeftClose, PanelLeftOpen, Menu, LayoutDashboard
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -15,7 +15,8 @@ import UserAvatar from '@/components/UserAvatar';
 import AlertsBell from '@/components/AlertsBell';
 
 const navItems = [
-  { to: '/', icon: CreditCard, label: 'Ventes', end: true },
+  { to: '/dashboard', icon: LayoutDashboard, label: 'Tableau de bord', end: true },
+  { to: '/ventes', icon: CreditCard, label: 'Ventes' },
   { to: '/paiements', icon: Coins, label: 'Paiements Ventes' },
   { to: '/pipeline', icon: KanbanSquare, label: 'Devis' },
   { to: '/simulateur-devis', icon: Calculator, label: 'Simulateur Devis' },

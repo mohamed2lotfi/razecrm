@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import { AuthProvider, useAuth } from '@/contexts/AuthContext';
 import { SidebarProvider } from '@/contexts/SidebarContext';
 import Login from '@/pages/Login';
+import Dashboard from '@/pages/Dashboard';
 import Ventes from '@/pages/Ventes';
 import Paiements from '@/pages/Paiements';
 import Clients from '@/pages/Clients';
@@ -51,7 +52,9 @@ function App() {
             <Route path="/login" element={<Login />} />
             
             {/* Routes Opérationnelles (Admin & Agent) */}
-            <Route path="/" element={<RoleRoute allowedRoles={['admin', 'agent']}><Ventes /></RoleRoute>} />
+            <Route path="/" element={<RoleRoute allowedRoles={['admin', 'agent']}><Dashboard /></RoleRoute>} />
+            <Route path="/dashboard" element={<RoleRoute allowedRoles={['admin', 'agent']}><Dashboard /></RoleRoute>} />
+            <Route path="/ventes" element={<RoleRoute allowedRoles={['admin', 'agent']}><Ventes /></RoleRoute>} />
             <Route path="/paiements" element={<RoleRoute allowedRoles={['admin', 'agent']}><Paiements /></RoleRoute>} />
             <Route path="/pipeline" element={<RoleRoute allowedRoles={['admin', 'agent']}><Pipeline /></RoleRoute>} />
             <Route path="/simulateur-devis" element={<RoleRoute allowedRoles={['admin', 'agent']}><SimulateurDevis /></RoleRoute>} />
