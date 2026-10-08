@@ -148,9 +148,23 @@ export default function Dashboard() {
             const groupPays = payData.filter(p => p.groupe_id === g.id);
 
             let totalPax = 0;
+            let paxHommes = 0;
+            let paxFemmes = 0;
+            let nbrChd = 0;
             let totalDu = 0;
 
             groupEnrs.forEach(enr => {
+              (enr.pelerins || []).forEach(p => {
+                if (p.sexe === 'F') paxFemmes++;
+                else paxHommes++;
+                if (p.chd) nbrChd++;
+              });
+              (enr.enfants_sans_lit || []).forEach(enf => {
+                if (enf.sexe === 'F') paxFemmes++;
+                else paxHommes++;
+                nbrChd++;
+              });
+
               const pelCount = (enr.pelerins && Array.isArray(enr.pelerins)) ? enr.pelerins.length : 0;
               const enfCount = (enr.enfants_sans_lit && Array.isArray(enr.enfants_sans_lit)) ? enr.enfants_sans_lit.length : 0;
               totalPax += (pelCount + enfCount);
@@ -171,6 +185,9 @@ export default function Dashboard() {
             return {
               ...g,
               totalPax,
+              paxHommes,
+              paxFemmes,
+              nbrChd,
               nbrPlaces,
               placesRestantes,
               totalDu,
@@ -298,6 +315,14 @@ export default function Dashboard() {
     return omraGroups.reduce((sum, g) => sum + (g.placesRestantes || 0), 0);
   }, [omraGroups]);
 
+  const totalHommesOmra = useMemo(() => {
+    return omraGroups.reduce((sum, g) => sum + (g.paxHommes || 0), 0);
+  }, [omraGroups]);
+
+  const totalFemmesOmra = useMemo(() => {
+    return omraGroups.reduce((sum, g) => sum + (g.paxFemmes || 0), 0);
+  }, [omraGroups]);
+
   const urgentAlertsCount = useMemo(() => {
     return agentAlerts.filter(a => a.alert?.priority === 'urgent' || a.alert?.priority === 'high').length;
   }, [agentAlerts]);
@@ -406,8 +431,13 @@ export default function Dashboard() {
                   <Plane size={12} className="text-emerald-600" /> Prochains Vols Omra
                 </span>
                 <p className="text-lg font-black text-emerald-950 leading-none">
-                  {omraGroups.length} <span className="text-[11px] font-semibold text-emerald-700">({totalPlacesRestantesOmra} places disp.)</span>
+                  {omraGroups.length} <span className="text-[11px] font-semibold text-emerald-700">vols</span>
                 </p>
+                <div className="flex items-center gap-1 pt-0.5 text-[10px]">
+                  <span className="font-bold text-blue-700 bg-blue-100/80 px-1 py-0.2 rounded">👨 {totalHommesOmra} H</span>
+                  <span className="font-bold text-pink-700 bg-pink-100/80 px-1 py-0.2 rounded">👩 {totalFemmesOmra} F</span>
+                  <span className="text-emerald-700 font-medium truncate">({totalPlacesRestantesOmra} pl. rest.)</span>
+                </div>
               </div>
               <div className="w-8 h-8 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center font-bold text-xs shrink-0">
                 <ArrowUpRight size={15} />
@@ -565,6 +595,10 @@ export default function Dashboard() {
                 <Badge variant="secondary" className="text-[10px] font-bold px-1.5 py-0 h-4 bg-emerald-100 text-emerald-800 border-0">
                   {omraGroups.length}
                 </Badge>
+                <div className="hidden sm:flex items-center gap-1 ml-1 text-[9px] font-bold">
+                  <span className="px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200">👨 {totalHommesOmra} H</span>
+                  <span className="px-1.5 py-0.2 rounded bg-pink-50 text-pink-700 border border-pink-200">👩 {totalFemmesOmra} F</span>
+                </div>
               </div>
               <button 
                 onClick={() => navigate('/omra')}
@@ -593,7 +627,7 @@ export default function Dashboard() {
                       onClick={() => navigate(`/omra/group/${grp.id}`)}
                       className="p-2.5 rounded-lg border border-slate-200/80 hover:border-emerald-300 hover:bg-emerald-50/20 bg-white transition-all cursor-pointer flex flex-col gap-2 shadow-2xs group"
                     >
-                      {/* Top row: Title + Airline + Dates */}
+                      {/* Top row: Title + Airline + Dates + Homme/Femme */}
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 truncate">
                           <span className="font-mono text-[10px] font-bold px-1.5 py-0.2 bg-emerald-100 text-emerald-800 rounded border border-emerald-200 shrink-0">
@@ -603,10 +637,23 @@ export default function Dashboard() {
                             {grp.nom}
                           </span>
                         </div>
-                        <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full shrink-0 flex items-center gap-1">
-                          <Calendar size={10} />
-                          {grp.date_depart || 'Date à définir'}
-                        </span>
+                        <div className="flex items-center gap-1 shrink-0">
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-blue-50 text-blue-700 border border-blue-200" title="Hommes">
+                            👨 {grp.paxHommes || 0} H
+                          </span>
+                          <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-pink-50 text-pink-700 border border-pink-200" title="Femmes">
+                            👩 {grp.paxFemmes || 0} F
+                          </span>
+                          {grp.nbrChd > 0 && (
+                            <span className="text-[9px] font-bold px-1.5 py-0.2 rounded bg-amber-50 text-amber-700 border border-amber-200" title="Enfants (CHD)">
+                              🧒 {grp.nbrChd}
+                            </span>
+                          )}
+                          <span className="text-[10px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-full flex items-center gap-1">
+                            <Calendar size={10} />
+                            {grp.date_depart || 'À définir'}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Middle row: Places Progress & Financial Stats */}
