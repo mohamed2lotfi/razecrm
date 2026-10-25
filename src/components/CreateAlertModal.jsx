@@ -44,7 +44,7 @@ export default function CreateAlertModal({ isOpen, onClose, onSuccess, initialEn
       const { data } = await supabase
         .from('profiles')
         .select('id, nom, email, role')
-        .in('role', ['admin', 'agent'])
+        .in('role', ['admin', 'agent', 'manager'])
         .order('nom');
       
       if (data) {
@@ -312,7 +312,7 @@ export default function CreateAlertModal({ isOpen, onClose, onSuccess, initialEn
                 </div>
                 <div>
                   <span className="text-slate-900 font-bold block">Toute l'équipe ({recipients.length} membres)</span>
-                  <span className="text-slate-500 text-[11px]">Tous les agents et admins recevront cette alerte.</span>
+                  <span className="text-slate-500 text-[11px]">Tous les agents, managers et admins recevront cette alerte.</span>
                 </div>
               </div>
             ) : (
@@ -336,7 +336,18 @@ export default function CreateAlertModal({ isOpen, onClose, onSuccess, initialEn
                       </div>
                       <div className="flex flex-col min-w-0">
                         <span className="text-xs truncate font-semibold text-slate-900">{agent.nom || agent.email}</span>
-                        <span className="text-[10px] text-slate-500 uppercase font-medium">{agent.role}</span>
+                        <div className="flex items-center gap-1 mt-0.5">
+                          <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase ${
+                            agent.role === 'manager'
+                              ? 'bg-emerald-100 text-emerald-800 border border-emerald-300'
+                              : agent.role === 'admin'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-300'
+                              : 'bg-slate-200 text-slate-600'
+                          }`}>
+                            {agent.role}
+                          </span>
+                          <span className="text-[10px] text-slate-400 truncate">{agent.email}</span>
+                        </div>
                       </div>
                     </div>
                   );

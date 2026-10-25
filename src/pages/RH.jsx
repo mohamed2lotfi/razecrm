@@ -393,6 +393,10 @@ const RH = () => {
                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/15 text-amber-700 border border-amber-500/30 w-fit">
                                       <ShieldCheck size={12} /> Compte Admin
                                     </span>
+                                  ) : userProfile.role === 'manager' ? (
+                                    <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-500/15 text-emerald-700 border border-emerald-500/30 w-fit">
+                                      <UserCheck size={12} /> Compte Manager
+                                    </span>
                                   ) : (
                                     <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-blue-500/15 text-blue-700 border border-blue-500/30 w-fit">
                                       <UserCheck size={12} /> Compte Agent
@@ -645,6 +649,7 @@ const RH = () => {
                         className="w-full h-10 px-3 text-sm font-semibold rounded-xl border border-slate-200 bg-white focus:border-indigo-500 focus:outline-none cursor-pointer"
                       >
                         <option value="agent">Agent (Opérationnel : Ventes, Devis, Omra, Visas, Facturation, Clients...)</option>
+                        <option value="manager">Manager (PocketApp Mobile, Devis, Vols Omra, Alertes)</option>
                         <option value="admin">Administrateur (Accès total)</option>
                       </select>
                     </div>
@@ -735,6 +740,7 @@ const RH = () => {
                 className="w-full h-10 px-3 text-sm font-semibold rounded-xl border border-slate-200 bg-white focus:outline-none focus:border-indigo-500 cursor-pointer"
               >
                 <option value="agent">Agent (Opérationnel, sans accès finance/admin)</option>
+                <option value="manager">Manager (PocketApp Mobile, Devis, Vols Omra, Alertes)</option>
                 <option value="admin">Administrateur (Accès total)</option>
               </select>
             </div>

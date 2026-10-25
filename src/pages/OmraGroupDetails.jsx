@@ -18,11 +18,15 @@ import {
   User, Wallet, Calculator, TrendingUp, Table, Loader2,
   Printer, Edit2, Upload, File, ChevronDown, CheckCircle,
   AlertCircle, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight,
-  FolderOpen, Camera, UserCheck, X, Check, Split, CheckSquare, Square, CheckCircle2
+  FolderOpen, Camera, UserCheck, X, Check, Split, CheckSquare, Square, CheckCircle2,
+  IdCard
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import ClientForm from '@/components/ClientForm';
 import OmraGroupChecklistTab from '@/components/OmraGroupChecklistTab';
+import OmraGroupBadgesTab from '@/components/OmraGroupBadgesTab';
+import OmraGroupRoomSummary from '@/components/OmraGroupRoomSummary';
+import { buildChambresPhysiques, computeGroupRoomStats, getChambreCapacity } from '@/lib/omraRoomUtils';
 import { ReactSortable } from "react-sortablejs";
 
 const CHAMBRE_CAPACITY = {
@@ -241,18 +245,36 @@ const OmraGroupDetails = () => {
   const groupePaiements = paiements;
   const groupePaiementsCommissions = paiementsCommissions;
 
-  const [activeTab, setActiveTab] = useState(urlTab || 'enregistrements'); // enregistrements | vueliste | chambres | paiements | commissions | finance | checklist
+  const [activeTab, setActiveTab] = useState(urlTab || 'enregistrements'); // enregistrements | vueliste | chambres | paiements | commissions | finance | checklist | badges
   const [activeListHotelId, setActiveListHotelId] = useState('');
   const [pelerinsMaster, setPelerinsMaster] = useState([]);
 
   useEffect(() => {
-    if (urlTab && ['enregistrements', 'vueliste', 'chambres', 'paiements', 'commissions', 'finance', 'checklist'].includes(urlTab)) {
+    if (urlTab && ['enregistrements', 'vueliste', 'chambres', 'paiements', 'commissions', 'finance', 'checklist', 'badges'].includes(urlTab)) {
       setActiveTab(urlTab);
     }
   }, [urlTab]);
 
   const handleUpdateGroup = (updatedGroup) => {
     setGroupes(prev => prev.map(g => g.id === updatedGroup.id ? updatedGroup : g));
+  };
+
+  // Helper pour récupérer la photo du pèlerin (directe ou depuis pelerinsMaster)
+  const getPelerinPhoto = (pelerinObj, fallbackNom = '') => {
+    if (!pelerinObj && !fallbackNom) return null;
+    const direct = pelerinObj?.photo_url || pelerinObj?.photoUrl || pelerinObj?.photo;
+    if (direct) return direct;
+
+    const targetId = pelerinObj?.pelerin_id || pelerinObj?.id;
+    const targetNom = (pelerinObj?.nom || fallbackNom || '').trim().toLowerCase();
+
+    const master = pelerinsMaster.find(m => {
+      if (targetId && m.id === targetId) return true;
+      if (targetNom && m.nom && m.nom.trim().toLowerCase() === targetNom) return true;
+      return false;
+    });
+
+    return master?.photo_url || null;
   };
 
   // Modal Fiche Pèlerin (Sous-modale depuis le formulaire d'enregistrement)
@@ -953,44 +975,9 @@ const OmraGroupDetails = () => {
   const totalVentes = caTotalBrut - grandTotalReduction;
   const margeNette = caSansCommission - grandTotalReduction - grandTotalDepenses;
 
-  // --- Chambres Virtuelles Aggregation ---
-  const chambresPhysiques = {};
-  groupeEnregistrements.forEach(enr => {
-    (enr.pelerins || []).forEach((p, idx) => {
-      const cId = p.chambreId || enr.chambreId || enr.id;
-      if (!chambresPhysiques[cId]) {
-        chambresPhysiques[cId] = {
-          chambreId: cId,
-          hotelId: enr.hotelId,
-          typeChambre: enr.typeChambre,
-          occupants: [],
-          enregistrements: []
-        };
-      }
-      if (!chambresPhysiques[cId].enregistrements.find(e => e.id === enr.id)) {
-        chambresPhysiques[cId].enregistrements.push(enr);
-      }
-      chambresPhysiques[cId].occupants.push({ ...p, isEnfantSansLit: false, sourceEnrId: enr.id, pelerinIdx: idx });
-    });
-
-    (enr.enfantsSansLit || []).forEach((enf, idx) => {
-      const cId = enf.chambreId || enr.chambreId || enr.id;
-      if (!chambresPhysiques[cId]) {
-        chambresPhysiques[cId] = {
-          chambreId: cId,
-          hotelId: enr.hotelId,
-          typeChambre: enr.typeChambre,
-          occupants: [],
-          enregistrements: []
-        };
-      }
-      if (!chambresPhysiques[cId].enregistrements.find(e => e.id === enr.id)) {
-        chambresPhysiques[cId].enregistrements.push(enr);
-      }
-      chambresPhysiques[cId].occupants.push({ ...enf, isEnfantSansLit: true, sourceEnrId: enr.id, enfantIdx: idx });
-    });
-  });
-  const listeChambresPhysiques = Object.values(chambresPhysiques);
+  // --- Chambres Virtuelles & Lits Vides Aggregation ---
+  const listeChambresPhysiques = buildChambresPhysiques(groupeEnregistrements, roomCapacityOverrides);
+  const groupRoomStats = computeGroupRoomStats(listeChambresPhysiques, groupe?.hotels, hotels);
 
   // --- Commissions Aggregation ---
   const commissionsByIntermediaire = {};
@@ -2359,6 +2346,7 @@ const OmraGroupDetails = () => {
     { id: 'commissions', label: 'Commissions', icon: User },
     { id: 'finance', label: 'Bilan Financier', icon: Wallet },
     { id: 'checklist', label: 'Checklist Vol', icon: CheckSquare },
+    { id: 'badges', label: 'Badges Pèlerins', icon: IdCard },
   ];
 
   return (
@@ -2388,6 +2376,18 @@ const OmraGroupDetails = () => {
             </div>
             
             <div className="flex items-center gap-2 flex-wrap">
+              <Button 
+                onClick={() => setActiveTab('badges')} 
+                className={cn(
+                  "h-9 text-xs font-bold transition-all",
+                  activeTab === 'badges'
+                    ? "bg-emerald-500 text-white shadow-md"
+                    : "bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-200 border border-emerald-400/40"
+                )}
+                title="Générer et imprimer les badges pèlerins"
+              >
+                <IdCard size={15} className="mr-1.5" /> Badges Pèlerins
+              </Button>
               {isAdmin && (
                 <Button 
                   variant="outline" 
@@ -2444,6 +2444,20 @@ const OmraGroupDetails = () => {
             <div>
               <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Restauration</p>
               <p className="text-2xl font-extrabold text-orange-200">{paxRestauration} <span className="text-xs font-normal text-white/50 block md:inline mt-1 md:mt-0 md:ml-1">({fmtDZD(grandTotalRestaurationDZD)} DZD)</span></p>
+            </div>
+            <div className="w-px h-8 bg-white/10" />
+            <div>
+              <p className="text-[10px] uppercase tracking-widest text-white/40 font-bold">Lits Vides</p>
+              <p className={cn("text-2xl font-extrabold", groupRoomStats.totalLitsVides > 0 ? "text-amber-300" : "text-emerald-300")}>
+                {groupRoomStats.totalLitsVides}
+                <span className="text-xs font-normal text-white/60 ml-2 inline-flex items-center gap-1.5">
+                  {groupRoomStats.litsVidesHommes > 0 && <span className="text-blue-300 font-bold">👨 {groupRoomStats.litsVidesHommes}H</span>}
+                  {groupRoomStats.litsVidesFemmes > 0 && <span className="text-pink-300 font-bold">👩 {groupRoomStats.litsVidesFemmes}F</span>}
+                  {(groupRoomStats.litsVidesMixte + groupRoomStats.litsVidesLibres) > 0 && (
+                    <span className="text-slate-300 font-medium">⚪ {groupRoomStats.litsVidesMixte + groupRoomStats.litsVidesLibres}</span>
+                  )}
+                </span>
+              </p>
             </div>
 
             <div className="w-full h-px bg-white/10 my-1 xl:hidden" />
@@ -2536,22 +2550,37 @@ const OmraGroupDetails = () => {
                           <td className="px-5 py-4 align-top">
                             <div className="flex flex-col gap-1.5">
                               <div className="flex flex-wrap gap-1.5">
-                                {enr.pelerins?.map((p, idx) => (
-                                  <span key={idx} className="inline-flex items-center gap-1.5 bg-muted/60 text-foreground px-2.5 py-1 rounded-md text-xs font-medium border">
-                                    <span className={cn("w-1.5 h-1.5 rounded-full", p.sexe === 'F' ? "bg-pink-400" : "bg-blue-400")} title={p.sexe === 'F' ? 'Femme' : 'Homme'}></span>
-                                    {p.nom || 'Sans nom'}
-                                    {p.chd && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">CHD</span>}
-                                    {p.restauration && <Utensils size={10} className="text-orange-500 ml-0.5" />}
-                                  </span>
-                                ))}
+                                {enr.pelerins?.map((p, idx) => {
+                                  const photo = getPelerinPhoto(p);
+                                  return (
+                                    <span key={idx} className="inline-flex items-center gap-1.5 bg-muted/60 text-foreground px-2 py-1 rounded-md text-xs font-medium border shadow-2xs">
+                                      {photo ? (
+                                        <img src={photo} alt={p.nom} className="w-4 h-4 rounded-full object-cover shrink-0 border border-slate-300" />
+                                      ) : (
+                                        <span className={cn("w-1.5 h-1.5 rounded-full shrink-0", p.sexe === 'F' ? "bg-pink-400" : "bg-blue-400")} title={p.sexe === 'F' ? 'Femme' : 'Homme'}></span>
+                                      )}
+                                      <span>{p.nom || 'Sans nom'}</span>
+                                      {p.chd && <span className="text-[9px] bg-blue-100 text-blue-700 px-1 py-0.5 rounded">CHD</span>}
+                                      {p.restauration && <Utensils size={10} className="text-orange-500 ml-0.5" />}
+                                    </span>
+                                  );
+                                })}
                               </div>
                               {enr.enfantsSansLit?.length > 0 && (
                                 <div className="flex flex-wrap gap-1.5 mt-1">
-                                  {enr.enfantsSansLit.map((e, idx) => (
-                                    <span key={`bb-${idx}`} className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border-amber-200 border px-2.5 py-1 rounded-md text-xs font-medium">
-                                      <Baby size={12} /> {e.nom || 'Bébé'}
-                                    </span>
-                                  ))}
+                                  {enr.enfantsSansLit.map((e, idx) => {
+                                    const photo = getPelerinPhoto(e);
+                                    return (
+                                      <span key={`bb-${idx}`} className="inline-flex items-center gap-1 bg-amber-50 text-amber-800 border-amber-200 border px-2 py-1 rounded-md text-xs font-medium shadow-2xs">
+                                        {photo ? (
+                                          <img src={photo} alt={e.nom} className="w-4 h-4 rounded-full object-cover shrink-0 border border-amber-300" />
+                                        ) : (
+                                          <Baby size={12} className="shrink-0" />
+                                        )}
+                                        <span>{e.nom || 'Bébé'}</span>
+                                      </span>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </div>
@@ -2694,21 +2723,46 @@ const OmraGroupDetails = () => {
                                 </td>
                               )}
                               <td className="px-4 py-2.5 border border-gray-200 font-medium text-gray-900 align-middle">
-                                <div className="flex items-center gap-2 flex-wrap">
-                                  <span>{m.nom}</span>
-                                  {m.isEnfantSansLit && (
-                                    <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded">Sans Lit</span>
-                                  )}
-                                  {m.chd && !m.isEnfantSansLit && (
-                                    <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold rounded">CHD</span>
-                                  )}
-                                  {m.restauration && (
-                                    <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[10px] font-bold rounded">Resto</span>
-                                  )}
-                                  {m.guide && (
-                                    <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded">Guide</span>
-                                  )}
-                                </div>
+                                {(() => {
+                                  const photo = getPelerinPhoto(m.rawPelerin, m.nom);
+                                  return (
+                                    <div className="flex items-center gap-2.5">
+                                      {photo ? (
+                                        <img 
+                                          src={photo} 
+                                          alt={m.nom} 
+                                          className="w-8 h-8 rounded-full object-cover shrink-0 border border-slate-300 shadow-2xs" 
+                                        />
+                                      ) : (
+                                        <div className={cn(
+                                          "w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs",
+                                          m.isEnfantSansLit
+                                            ? "bg-purple-100 text-purple-700"
+                                            : m.sexe === 'F'
+                                              ? "bg-pink-100 text-pink-700"
+                                              : "bg-blue-100 text-blue-700"
+                                        )}>
+                                          {m.isEnfantSansLit ? <Baby size={13} /> : m.nom ? m.nom.charAt(0).toUpperCase() : <User size={13} />}
+                                        </div>
+                                      )}
+                                      <div className="flex items-center gap-2 flex-wrap">
+                                        <span className="font-semibold text-slate-900">{m.nom}</span>
+                                        {m.isEnfantSansLit && (
+                                          <span className="px-1.5 py-0.5 bg-purple-100 text-purple-800 text-[10px] font-bold rounded">Sans Lit</span>
+                                        )}
+                                        {m.chd && !m.isEnfantSansLit && (
+                                          <span className="px-1.5 py-0.5 bg-amber-100 text-amber-800 border border-amber-200 text-[10px] font-bold rounded">CHD</span>
+                                        )}
+                                        {m.restauration && (
+                                          <span className="px-1.5 py-0.5 bg-orange-100 text-orange-800 text-[10px] font-bold rounded">Resto</span>
+                                        )}
+                                        {m.guide && (
+                                          <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded">Guide</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  );
+                                })()}
                               </td>
                               <td className="px-3 py-2.5 border border-gray-200 text-center text-gray-700 font-medium align-middle">
                                 {m.sexe === 'F' ? 'F' : 'M'}
@@ -2770,6 +2824,9 @@ const OmraGroupDetails = () => {
         {/* ── Tab Content: Chambres ── */}
         {activeTab === 'chambres' && (
           <div className="space-y-6">
+            {/* Résumé répartition des chambres par hôtel & lits vides */}
+            <OmraGroupRoomSummary roomStats={groupRoomStats} variant="full" />
+
             {groupe.hotels && groupe.hotels.length > 0 && (
               <div className="flex items-center gap-2 overflow-x-auto pb-2">
                 {groupe.hotels.map((h, idx) => (
@@ -2812,15 +2869,35 @@ const OmraGroupDetails = () => {
               return (
                 <div>
                   {/* Summary bar */}
-                  <div className="flex items-center gap-4 mb-5 text-sm">
+                  <div className="flex flex-wrap items-center gap-4 mb-5 text-sm bg-muted/20 p-3 rounded-lg border">
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <BedDouble size={16} className="text-primary" />
-                      <span className="font-semibold">{totalChambres}</span> chambres
+                      <span className="font-semibold text-foreground">{totalChambres}</span> chambres
                     </div>
                     <div className="w-px h-4 bg-border" />
                     <div className="flex items-center gap-2 text-muted-foreground">
                       <Users size={16} className="text-primary" />
-                      <span className="font-semibold">{chambresHotel.reduce((s, c) => s + c.occupants.length, 0)}</span> pèlerins
+                      <span className="font-semibold text-foreground">{chambresHotel.reduce((s, c) => s + c.occupants.length, 0)}</span> pèlerins
+                    </div>
+                    <div className="w-px h-4 bg-border" />
+                    <div className="flex items-center gap-1.5 text-xs font-bold">
+                      <span className="text-muted-foreground">Lits vides :</span>
+                      <span className={cn(
+                        "px-1.5 py-0.5 rounded text-[11px]",
+                        chambresHotel.reduce((s, c) => s + c.litsVides, 0) > 0 ? "bg-amber-100 text-amber-900 border border-amber-200" : "bg-emerald-100 text-emerald-800"
+                      )}>
+                        {chambresHotel.reduce((s, c) => s + c.litsVides, 0)}
+                      </span>
+                      {chambresHotel.filter(c => c.litsVidesType === 'H').reduce((s, c) => s + c.litsVides, 0) > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-700 border border-blue-200">
+                          👨 {chambresHotel.filter(c => c.litsVidesType === 'H').reduce((s, c) => s + c.litsVides, 0)} H
+                        </span>
+                      )}
+                      {chambresHotel.filter(c => c.litsVidesType === 'F').reduce((s, c) => s + c.litsVides, 0) > 0 && (
+                        <span className="px-1.5 py-0.5 rounded bg-pink-50 text-pink-700 border border-pink-200">
+                          👩 {chambresHotel.filter(c => c.litsVidesType === 'F').reduce((s, c) => s + c.litsVides, 0)} F
+                        </span>
+                      )}
                     </div>
                     {totalPages > 1 && (
                       <>
@@ -2960,34 +3037,44 @@ const OmraGroupDetails = () => {
                             ghostClass="opacity-30"
                             className="flex-1 p-1.5 min-h-[100px] flex flex-col gap-1"
                           >
-                            {sortableList.map(occ => (
-                              <div 
-                                 key={occ.id}
-                                 data-enrid={occ.sourceEnrId}
-                                 data-idx={occ.isEnfantSansLit ? occ.enfantIdx : occ.pelerinIdx}
-                                 data-isenfant={occ.isEnfantSansLit}
-                                 className={cn(
-                                   "flex items-center gap-2 px-2 py-1.5 rounded-lg border cursor-grab active:cursor-grabbing transition-all",
-                                   "hover:shadow-sm hover:border-primary/30 hover:bg-primary/5",
-                                   "bg-background border-border/60"
-                                 )}
-                                 title={`Glisser ${occ.nom} vers une autre chambre`}
-                              >
-                                {/* Gender icon */}
-                                <div className={cn(
-                                  "w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold",
-                                  occ.isEnfantSansLit
-                                    ? "bg-amber-100 text-amber-600"
-                                    : occ.sexe === 'F' 
-                                      ? "bg-pink-100 text-pink-600" 
-                                      : "bg-blue-100 text-blue-600"
-                                )}>
-                                  {occ.isEnfantSansLit ? <Baby size={10} /> : <User size={10} />}
-                                </div>
-                                {/* Name */}
-                                <span className="text-xs font-semibold text-foreground truncate flex-1">{occ.nom}</span>
-                                {/* Tags */}
-                                <div className="flex items-center gap-0.5 shrink-0">
+                            {sortableList.map(occ => {
+                              const photo = getPelerinPhoto(occ);
+                              return (
+                                <div 
+                                   key={occ.id}
+                                   data-enrid={occ.sourceEnrId}
+                                   data-idx={occ.isEnfantSansLit ? occ.enfantIdx : occ.pelerinIdx}
+                                   data-isenfant={occ.isEnfantSansLit}
+                                   className={cn(
+                                     "flex items-center gap-2 px-2 py-1.5 rounded-lg border cursor-grab active:cursor-grabbing transition-all",
+                                     "hover:shadow-sm hover:border-primary/30 hover:bg-primary/5",
+                                     "bg-background border-border/60"
+                                   )}
+                                   title={`Glisser ${occ.nom} vers une autre chambre`}
+                                >
+                                  {/* Photo ou Gender icon */}
+                                  {photo ? (
+                                    <img
+                                      src={photo}
+                                      alt={occ.nom}
+                                      className="w-5 h-5 rounded-full object-cover shrink-0 border border-slate-300 shadow-2xs"
+                                    />
+                                  ) : (
+                                    <div className={cn(
+                                      "w-5 h-5 rounded-full flex items-center justify-center shrink-0 text-[10px] font-bold",
+                                      occ.isEnfantSansLit
+                                        ? "bg-amber-100 text-amber-600"
+                                        : occ.sexe === 'F' 
+                                          ? "bg-pink-100 text-pink-600" 
+                                          : "bg-blue-100 text-blue-600"
+                                    )}>
+                                      {occ.isEnfantSansLit ? <Baby size={10} /> : <User size={10} />}
+                                    </div>
+                                  )}
+                                  {/* Name */}
+                                  <span className="text-xs font-semibold text-foreground truncate flex-1">{occ.nom}</span>
+                                  {/* Tags */}
+                                  <div className="flex items-center gap-0.5 shrink-0">
                                   {occ.chd && !occ.isEnfantSansLit && (
                                     <span className="w-4 h-4 rounded bg-amber-100 text-amber-700 flex items-center justify-center" title="Enfant (CHD)">
                                       <Baby size={9} />
@@ -3008,21 +3095,41 @@ const OmraGroupDetails = () => {
                                   )}
                                 </div>
                               </div>
-                            ))}
+                            );
+                          })}
                           </ReactSortable>
                           
-                          {/* Empty slots placeholders */}
+                          {/* Empty slots placeholders avec indication Homme / Femme */}
                           {occupantsForCapacity.length < capacity && (
                             <div className="px-1.5 pb-1.5 flex flex-col gap-1">
-                              {Array.from({ length: capacity - occupantsForCapacity.length }).map((_, i) => (
-                                <button
-                                  key={`empty-${i}`}
-                                  onClick={() => handleCompleteRoom(chambre)}
-                                  className="flex items-center justify-center gap-1.5 px-2 py-1.5 w-full rounded-lg border border-dashed border-muted-foreground/40 bg-muted/10 text-muted-foreground hover:bg-primary/5 hover:border-primary/40 hover:text-primary transition-colors text-[11px] font-medium"
-                                >
-                                  <Plus size={12} /> Compléter
-                                </button>
-                              ))}
+                              {Array.from({ length: capacity - occupantsForCapacity.length }).map((_, i) => {
+                                const isOnlyFemmes = chambre.femmes > 0 && chambre.hommes === 0;
+                                const isOnlyHommes = chambre.hommes > 0 && chambre.femmes === 0;
+
+                                return (
+                                  <button
+                                    key={`empty-${i}`}
+                                    onClick={() => handleCompleteRoom(chambre)}
+                                    className={cn(
+                                      "flex items-center justify-center gap-1.5 px-2 py-1.5 w-full rounded-lg border border-dashed transition-colors text-[11px] font-medium",
+                                      isOnlyFemmes 
+                                        ? "border-pink-300 bg-pink-50/50 text-pink-700 hover:bg-pink-100/70" 
+                                        : isOnlyHommes
+                                          ? "border-blue-300 bg-blue-50/50 text-blue-700 hover:bg-blue-100/70"
+                                          : "border-muted-foreground/40 bg-muted/10 text-muted-foreground hover:bg-primary/5 hover:border-primary/40 hover:text-primary"
+                                    )}
+                                    title={isOnlyFemmes ? "Lit vide réservé Femme (chambre 100% femmes)" : isOnlyHommes ? "Lit vide réservé Homme (chambre 100% hommes)" : "Compléter le lit vide"}
+                                  >
+                                    {isOnlyFemmes ? (
+                                      <span className="font-bold flex items-center gap-1">👩 Lit vide Femme <Plus size={11} className="ml-0.5" /></span>
+                                    ) : isOnlyHommes ? (
+                                      <span className="font-bold flex items-center gap-1">👨 Lit vide Homme <Plus size={11} className="ml-0.5" /></span>
+                                    ) : (
+                                      <span className="flex items-center gap-1"><Plus size={12} /> Compléter</span>
+                                    )}
+                                  </button>
+                                );
+                              })}
                             </div>
                           )}
                           </div>
@@ -3399,6 +3506,17 @@ const OmraGroupDetails = () => {
             onUpdateGroup={handleUpdateGroup} 
             agencySettings={agencySettings} 
             isAdmin={isAdmin} 
+          />
+        )}
+
+        {/* ── Tab Content: Badges Pèlerins ── */}
+        {activeTab === 'badges' && (
+          <OmraGroupBadgesTab 
+            groupe={groupe} 
+            enregistrements={enregistrements} 
+            hotels={hotels} 
+            pelerinsMaster={pelerinsMaster} 
+            getPelerinPhoto={getPelerinPhoto} 
           />
         )}
         

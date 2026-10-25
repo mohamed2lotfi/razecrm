@@ -12,6 +12,8 @@ import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { getChecklistStats, getDefaultChecklist, generateNextGroupCode } from '@/lib/omraChecklistConstants';
+import { buildChambresPhysiques, computeGroupRoomStats } from '@/lib/omraRoomUtils';
+import OmraGroupRoomSummary from '@/components/OmraGroupRoomSummary';
 import OmraGroupForm from './OmraGroupForm';
 
 const OmraGroupes = () => {
@@ -28,25 +30,35 @@ const OmraGroupes = () => {
 
   const fetchGroupes = async () => {
     setLoading(true);
-    const [gRes, hRes] = await Promise.all([
+    const [gRes, hRes, enrRes] = await Promise.all([
       supabase.from('omra_groupes').select('*').order('created_at', { ascending: false }),
-      supabase.from('hotels').select('*')
+      supabase.from('hotels').select('*'),
+      supabase.from('omra_enregistrements').select('id, groupe_id, hotel_id, type_chambre, chambre_id, pelerins, enfants_sans_lit')
     ]);
     if (gRes.data) {
       const hotelsMaster = hRes.data || [];
-      const mappedGroups = gRes.data.map(g => ({
-        ...g,
-        code: g.code || g.nom?.match(/OMRAETV\d+\/\d+/i)?.[0] || '',
-        hotels: (g.hotels || []).map(h => {
-          const matchedHotel = hotelsMaster.find(m => m.id === h.hotelId || m.nom === h.hotelId || (typeof h.hotelId === 'string' && h.hotelId.startsWith(m.nom)));
-          const cleanLoc = (h.location || h.hotelId || 'Hôtel Inconnu').replace(/undefined\s*étoiles/gi, '').trim();
-          return {
-            ...h,
-            location: matchedHotel ? matchedHotel.nom : cleanLoc,
-            nbrEtoiles: matchedHotel ? (matchedHotel.nbr_etoiles || matchedHotel.nbrEtoiles || '4') : (h.nbrEtoiles || '4')
-          };
-        })
-      }));
+      const allEnrs = enrRes.data || [];
+
+      const mappedGroups = gRes.data.map(g => {
+        const groupEnrs = allEnrs.filter(e => e.groupe_id === g.id);
+        const groupChambres = buildChambresPhysiques(groupEnrs);
+        const roomStats = computeGroupRoomStats(groupChambres, g.hotels, hotelsMaster);
+
+        return {
+          ...g,
+          code: g.code || g.nom?.match(/OMRAETV\d+\/\d+/i)?.[0] || '',
+          hotels: (g.hotels || []).map(h => {
+            const matchedHotel = hotelsMaster.find(m => m.id === h.hotelId || m.nom === h.hotelId || (typeof h.hotelId === 'string' && h.hotelId.startsWith(m.nom)));
+            const cleanLoc = (h.location || h.hotelId || 'Hôtel Inconnu').replace(/undefined\s*étoiles/gi, '').trim();
+            return {
+              ...h,
+              location: matchedHotel ? matchedHotel.nom : cleanLoc,
+              nbrEtoiles: matchedHotel ? (matchedHotel.nbr_etoiles || matchedHotel.nbrEtoiles || '4') : (h.nbrEtoiles || '4')
+            };
+          }),
+          roomStats
+        };
+      });
       setGroupes(mappedGroups);
     }
     setLoading(false);
@@ -281,22 +293,9 @@ const OmraGroupes = () => {
                       </div>
                     </div>
 
-                    {/* Hôtels */}
+                    {/* Répartition des Chambres par Hôtel & Lits Vides */}
                     <div className="pt-2 border-t">
-                      <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium mb-1.5">
-                        <Building2 size={13} /> Hôtels associés ({group.hotels?.length || 0})
-                      </div>
-                      <div className="flex flex-wrap gap-1">
-                        {group.hotels?.length === 0 ? (
-                          <span className="text-[11px] text-muted-foreground italic">Aucun hôtel configuré</span>
-                        ) : (
-                          group.hotels?.map((h, i) => (
-                            <span key={i} className="text-[10px] bg-muted px-2 py-0.5 rounded font-bold uppercase border" title={h.location}>
-                              {h.location || `Hôtel ${i + 1}`} {h.nbrEtoiles ? `(${h.nbrEtoiles}★)` : ''}
-                            </span>
-                          ))
-                        )}
-                      </div>
+                      <OmraGroupRoomSummary roomStats={group.roomStats} variant="compact" />
                     </div>
                   </CardContent>
                 </div>

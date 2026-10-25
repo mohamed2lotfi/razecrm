@@ -6,13 +6,14 @@ import {
   ArrowUpRight, Sparkles, Filter, ArrowUpDown, Search, X, UserCheck, Check,
   TrendingUp, Send, CheckCircle2, ShieldAlert, ChevronRight, Eye, Briefcase,
   MessageCircle, Copy, PhoneCall, Zap, Edit3, ArrowRightLeft, ExternalLink, ShieldCheck, FileText,
-  ChevronLeft, ChevronsLeft, ChevronsRight
+  ChevronLeft, ChevronsLeft, ChevronsRight, Smartphone
 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import Layout from '@/components/Layout';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import ProspectModal from '@/components/ProspectModal';
+import SendToManagerModal from '@/components/SendToManagerModal';
 import VenteForm from '@/components/VenteForm';
 import ClientDossierModal from '@/components/ClientDossierModal';
 import CountryFlag from '@/components/CountryFlag';
@@ -72,7 +73,9 @@ const getQuoteMeta = (task) => {
     destination_emoji: '📍',
     priorite: 'Moyenne',
     agent_nom: '',
-    agent_id: ''
+    agent_id: '',
+    manager_sent: null,
+    manager_response: null
   };
   try {
     if (task.details_devis && typeof task.details_devis === 'string' && task.details_devis.trim().startsWith('{')) {
@@ -83,6 +86,8 @@ const getQuoteMeta = (task) => {
       if (parsed.priorite) meta.priorite = parsed.priorite;
       if (parsed.agent_nom) meta.agent_nom = parsed.agent_nom;
       if (parsed.agent_id) meta.agent_id = parsed.agent_id;
+      if (parsed.manager_sent) meta.manager_sent = parsed.manager_sent;
+      if (parsed.manager_response) meta.manager_response = parsed.manager_response;
     }
   } catch (e) {}
   return meta;
@@ -141,6 +146,8 @@ const Pipeline = () => {
   const [toastMessage, setToastMessage] = useState(null);
   const [dossierClient, setDossierClient] = useState(null);
   const [isDossierModalOpen, setIsDossierModalOpen] = useState(false);
+  const [managerModalDevis, setManagerModalDevis] = useState(null);
+  const [isManagerModalOpen, setIsManagerModalOpen] = useState(false);
 
   const [columnsState, setColumnsState] = useState({
     nouvelle: [], en_cours: [], envoye: [], converti_vente: [], converti_omra: [], ferme: []
@@ -354,6 +361,16 @@ const Pipeline = () => {
 
   const handleCreate = () => { setSelectedProspect(null); setIsNew(true); setIsModalOpen(true); };
   const handleCardClick = (p) => { setSelectedProspect(p); setIsNew(false); setIsModalOpen(true); };
+  
+  const handleOpenSendToManager = (task) => {
+    setManagerModalDevis(task);
+    setIsManagerModalOpen(true);
+  };
+
+  const handleManagerSent = (updatedDevis) => {
+    setPipelineData(prev => prev.map(p => p.id === updatedDevis.id ? { ...p, ...updatedDevis } : p));
+    showToast("Devis transmis au Manager avec succès !");
+  };
   
   const handleDelete = async (e, id) => {
     if (e) e.stopPropagation();
@@ -634,6 +651,41 @@ const Pipeline = () => {
             {task.service_id && (
               <span className={cn("text-[9px] font-bold px-1.5 py-0.5 rounded border", col.light)}>
                 {getServiceName(task.service_id)}
+              </span>
+            )}
+          </div>
+
+          {/* Manager Transmission Row */}
+          <div className="flex items-center justify-between pt-1">
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                handleOpenSendToManager(task);
+              }}
+              className={cn(
+                "text-[10px] font-bold px-2 py-0.5 rounded-md border inline-flex items-center gap-1 transition-all active:scale-95",
+                meta.manager_sent
+                  ? meta.manager_response
+                    ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border-emerald-500/30"
+                    : "bg-amber-500/15 text-amber-700 dark:text-amber-300 border-amber-500/30 animate-pulse"
+                  : "bg-muted/60 hover:bg-muted text-muted-foreground hover:text-foreground border-border/80"
+              )}
+              title={meta.manager_sent ? `Transmis à ${meta.manager_sent.manager_nom || 'Manager'} (${meta.manager_response ? 'Répondu' : 'En attente'})` : "Envoyer à un manager (PocketApp)"}
+            >
+              <Smartphone size={11} className={meta.manager_sent ? (meta.manager_response ? "text-emerald-500" : "text-amber-500") : "text-muted-foreground"} />
+              <span>
+                {meta.manager_sent
+                  ? meta.manager_response
+                    ? "Mgr: Répondu"
+                    : `Mgr: ${meta.manager_sent.manager_nom ? meta.manager_sent.manager_nom.split(' ')[0] : 'En attente'}`
+                  : "Envoyer au Manager"}
+              </span>
+            </button>
+
+            {meta.manager_response && (
+              <span className="text-[9px] font-bold text-emerald-600 dark:text-emerald-400 flex items-center gap-0.5">
+                <CheckCircle2 size={10} /> Réponse reçue
               </span>
             )}
           </div>
@@ -1145,6 +1197,20 @@ const Pipeline = () => {
                           <Button 
                             variant="ghost" 
                             size="icon-sm" 
+                            onClick={() => handleOpenSendToManager(task)}
+                            className={cn(
+                              "h-7 w-7 transition-colors",
+                              meta.manager_sent 
+                                ? (meta.manager_response ? "text-emerald-500 hover:bg-emerald-500/20" : "text-amber-500 hover:bg-amber-500/20")
+                                : "text-muted-foreground hover:text-emerald-500 hover:bg-emerald-500/10"
+                            )}
+                            title={meta.manager_sent ? `Transmis au manager (${meta.manager_response ? 'Répondu' : 'En attente'})` : "Envoyer à un manager (PocketApp)"}
+                          >
+                            <Smartphone size={13} />
+                          </Button>
+                          <Button 
+                            variant="ghost" 
+                            size="icon-sm" 
                             onClick={() => handleCardClick(task)}
                             className="h-7 w-7 text-muted-foreground hover:text-primary"
                             title="Ouvrir le devis"
@@ -1321,6 +1387,18 @@ const Pipeline = () => {
                 <span>Copier Titre du Devis</span>
               </button>
 
+              <button
+                type="button"
+                onClick={() => {
+                  setContextMenu(null);
+                  handleOpenSendToManager(task);
+                }}
+                className="w-full px-2.5 py-1.5 rounded-xl hover:bg-emerald-500/20 text-emerald-300 hover:text-white flex items-center gap-2 transition-colors text-left font-bold"
+              >
+                <Smartphone size={13} className="text-emerald-400" />
+                <span>Envoyer au Manager (PocketApp)</span>
+              </button>
+
               {(task.client_id || task.clients) && (
                 <button
                   type="button"
@@ -1453,6 +1531,13 @@ const Pipeline = () => {
         isNew={isNew} 
         servicesList={servicesList} 
         clientsList={clientsList} 
+      />
+
+      <SendToManagerModal
+        isOpen={isManagerModalOpen}
+        onClose={() => setIsManagerModalOpen(false)}
+        devis={managerModalDevis}
+        onSent={handleManagerSent}
       />
 
       {isDossierModalOpen && dossierClient && (

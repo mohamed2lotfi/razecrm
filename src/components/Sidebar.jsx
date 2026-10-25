@@ -6,7 +6,8 @@ import {
   Database, KanbanSquare, Globe, ChevronDown, ChevronRight, LogOut,
   TrendingDown, FileBarChart, Scan, Briefcase, Stamp, Contact, Mail,
   ShieldCheck, UserCheck, Package, Calculator, User, Coins, PlaneTakeoff,
-  Layers, ChevronLeft, PanelLeftClose, PanelLeftOpen, Menu, LayoutDashboard
+  Layers, ChevronLeft, PanelLeftClose, PanelLeftOpen, Menu, LayoutDashboard,
+  IdCard
 } from 'lucide-react';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSidebar } from '@/contexts/SidebarContext';
@@ -248,6 +249,20 @@ const Sidebar = () => {
                 >
                   <span>Pèlerins</span>
                   <Users size={13} className="text-emerald-400" />
+                </NavLink>
+
+                <NavLink
+                  to="/omra/badges"
+                  className={({ isActive }) => cn(
+                    "px-3 py-2 rounded-lg text-xs font-medium transition-colors flex items-center justify-between",
+                    isActive ? "bg-primary/20 text-emerald-300 font-bold border border-primary/30" : "text-slate-400 hover:text-slate-200 hover:bg-white/5"
+                  )}
+                >
+                  <span className="flex items-center gap-1.5">
+                    <IdCard size={13} className="text-emerald-400" />
+                    Créateur de Badges
+                  </span>
+                  <span className="text-[9px] font-bold uppercase px-1 py-0.2 bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded">Builder</span>
                 </NavLink>
 
                 {isAdmin && (

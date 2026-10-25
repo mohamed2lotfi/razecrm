@@ -4,7 +4,8 @@ import {
   Calculator, BedDouble, Plane, Building2, Stamp, MapPin, Bus, 
   Baby, Award, CheckCircle2, ChevronDown, ChevronUp, Trash2, Check, 
   RefreshCw, DollarSign, Percent, Users, FileText, Home, Flag, User, Flame,
-  Clock, Calendar, MessageSquare, ArrowUpRight, Copy, Share2, Layers, Briefcase, Phone
+  Clock, Calendar, MessageSquare, ArrowUpRight, Copy, Share2, Layers, Briefcase, Phone,
+  Smartphone, ZoomIn, Image as ImageIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -16,6 +17,7 @@ import ClientForm from '@/components/ClientForm';
 import CountryFlag from '@/components/CountryFlag';
 import DestinationSelect from '@/components/DestinationSelect';
 import UserAvatar from '@/components/UserAvatar';
+import SendToManagerModal from '@/components/SendToManagerModal';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
@@ -64,6 +66,12 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
   const [priorite, setPriorite] = useState('Moyenne');
   const [assignedAgentId, setAssignedAgentId] = useState('');
   const [assignedAgentNom, setAssignedAgentNom] = useState('');
+
+  // Manager PocketApp Transmission & Response State
+  const [isSendManagerModalOpen, setIsSendManagerModalOpen] = useState(false);
+  const [managerSentData, setManagerSentData] = useState(null);
+  const [managerResponseData, setManagerResponseData] = useState(null);
+  const [previewManagerPhoto, setPreviewManagerPhoto] = useState(null);
 
   // Master data lists
   const [destinationsList, setDestinationsList] = useState([]);
@@ -179,6 +187,8 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
           setPriorite(parsed.priorite || 'Moyenne');
           setAssignedAgentId(parsed.agent_id || '');
           setAssignedAgentNom(parsed.agent_nom || '');
+          setManagerSentData(parsed.manager_sent || null);
+          setManagerResponseData(parsed.manager_response || null);
 
           // Options
           let newOpts = parsed.options && parsed.options.length ? parsed.options.map(opt => {
@@ -248,6 +258,8 @@ const ProspectModal = ({ isOpen, onClose, onSave, prospect, isNew, servicesList,
       setPriorite('Moyenne');
       setAssignedAgentId(user?.id || '');
       setAssignedAgentNom(activeAgentName);
+      setManagerSentData(null);
+      setManagerResponseData(null);
       setDevisOptions([{ text: '', images: [] }]);
       setSimulationsList([]);
       setRemarquesDevis([]);
@@ -967,7 +979,9 @@ Start the message directly with the greeting. End it with the closing phrase. No
       agent_nom: assignedAgentNom || activeAgentName,
       options: optionsToSave,
       simulations: simulationsList,
-      remarques: remarquesDevis
+      remarques: remarquesDevis,
+      manager_sent: managerSentData,
+      manager_response: managerResponseData
     };
 
     const clientFound = formData.client_id ? clientsList.find(c => c.id === formData.client_id) : null;
@@ -1158,6 +1172,28 @@ Start the message directly with the greeting. End it with the closing phrase. No
             >
               <Sparkles size={14} className={activeTab === 'reponse' ? "text-indigo-600" : "text-indigo-400"} />
               5. Réponse & IA
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('manager')}
+              className={cn(
+                "px-4 py-2.5 text-xs font-extrabold rounded-t-xl transition-all flex items-center gap-2 border-b-2",
+                activeTab === 'manager'
+                  ? "bg-white text-slate-900 border-emerald-600 shadow-sm"
+                  : "text-slate-300 hover:text-white hover:bg-white/10 border-transparent"
+              )}
+            >
+              <Smartphone size={14} className={activeTab === 'manager' ? "text-emerald-600" : "text-emerald-400"} />
+              6. Manager PocketApp 📲
+              {managerSentData && (
+                <span className={cn(
+                  "text-[9px] px-1.5 py-0.2 rounded-full font-bold",
+                  managerResponseData ? "bg-emerald-100 text-emerald-800" : "bg-amber-100 text-amber-800"
+                )}>
+                  {managerResponseData ? 'Répondu' : 'En attente'}
+                </span>
+              )}
             </button>
           </div>
         </div>
@@ -1975,6 +2011,132 @@ Start the message directly with the greeting. End it with the closing phrase. No
               </div>
             )}
 
+            {/* ═════════════════════════════════════════════════════════
+                TAB 6 : TRANSMISSION AU MANAGER (POCKETAPP)
+            ═════════════════════════════════════════════════════════ */}
+            {activeTab === 'manager' && (
+              <div className="space-y-4 animate-in fade-in duration-200">
+                <div className="p-4 rounded-2xl bg-gradient-to-r from-emerald-950/40 via-slate-900 to-slate-950 border border-emerald-500/30 flex items-center justify-between gap-4">
+                  <div className="flex items-center gap-3">
+                    <div className="w-10 h-10 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 shrink-0">
+                      <Smartphone size={20} />
+                    </div>
+                    <div>
+                      <h4 className="text-sm font-extrabold text-white flex items-center gap-2">
+                        <span>Transmission au Manager (PocketApp)</span>
+                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                          Mobile WebView
+                        </span>
+                      </h4>
+                      <p className="text-xs text-slate-300">
+                        Envoyez ce devis au manager sur sa PocketApp pour validation, recherche de vols ou tarification.
+                      </p>
+                    </div>
+                  </div>
+
+                  <Button
+                    type="button"
+                    onClick={() => setIsSendManagerModalOpen(true)}
+                    className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs gap-1.5 shadow-sm shrink-0"
+                  >
+                    <Send size={13} />
+                    <span>{managerSentData ? 'Modifier / Renvoyer' : 'Envoyer au Manager'}</span>
+                  </Button>
+                </div>
+
+                {/* Manager Transmission Status Card */}
+                {managerSentData ? (
+                  <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 space-y-3">
+                    <div className="flex items-center justify-between text-xs pb-2 border-b border-slate-200 dark:border-slate-800">
+                      <span className="text-slate-500">Destinataire :</span>
+                      <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
+                        <User size={13} className="text-emerald-500" />
+                        {managerSentData.manager_nom} ({managerSentData.manager_email || 'Manager'})
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Date d'envoi :</span>
+                      <span className="font-semibold text-slate-700 dark:text-slate-300">
+                        {managerSentData.sent_at ? new Date(managerSentData.sent_at).toLocaleString('fr-FR') : 'Récemment'}
+                      </span>
+                    </div>
+
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-slate-500">Statut actuel :</span>
+                      {managerResponseData ? (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-500/15 text-emerald-700 dark:text-emerald-300 border border-emerald-500/30 font-bold text-[11px]">
+                          <CheckCircle2 size={12} className="text-emerald-500" />
+                          <span>Réponse reçue du Manager</span>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-500/30 font-bold text-[11px] animate-pulse">
+                          <Clock size={12} className="text-amber-500" />
+                          <span>En attente de réponse du Manager...</span>
+                        </span>
+                      )}
+                    </div>
+
+                    {/* Manager Response Box */}
+                    {managerResponseData && (
+                      <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-2">
+                        <span className="text-xs font-bold text-emerald-600 dark:text-emerald-400 block">
+                          💬 Réponse du Manager ({managerResponseData.manager_nom || managerSentData.manager_nom}) :
+                        </span>
+                        {managerResponseData.reponse_texte && (
+                          <div className="p-3 rounded-xl bg-white dark:bg-slate-950 border border-emerald-500/30 text-xs leading-relaxed whitespace-pre-line font-medium text-slate-800 dark:text-slate-200 shadow-2xs">
+                            {managerResponseData.reponse_texte}
+                          </div>
+                        )}
+
+                        {managerResponseData.reponse_photo_url && (
+                          <div className="space-y-1.5 pt-1">
+                            <span className="text-[11px] font-bold text-slate-600 dark:text-slate-400 flex items-center gap-1">
+                              <ImageIcon size={13} className="text-emerald-500" />
+                              Photo / Capture transmise par le Manager :
+                            </span>
+                            <div 
+                              onClick={() => setPreviewManagerPhoto(managerResponseData.reponse_photo_url)}
+                              className="relative max-w-sm rounded-xl overflow-hidden border border-emerald-500/40 cursor-pointer group bg-black shadow-sm"
+                            >
+                              <img
+                                src={managerResponseData.reponse_photo_url}
+                                alt="Photo réponse manager"
+                                className="w-full h-44 object-cover group-hover:scale-105 transition-transform"
+                              />
+                              <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                <span className="text-xs font-bold text-white bg-black/70 px-3 py-1 rounded-full flex items-center gap-1">
+                                  <ZoomIn size={12} /> Agrandir
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="p-8 text-center rounded-2xl bg-slate-50 dark:bg-slate-900 border border-dashed border-slate-300 dark:border-slate-800 space-y-3">
+                    <Smartphone size={32} className="mx-auto text-slate-400" />
+                    <div>
+                      <h5 className="font-bold text-sm text-slate-900 dark:text-white">Ce devis n'a pas encore été envoyé à un manager</h5>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 max-w-md mx-auto">
+                        Cliquez sur le bouton ci-dessous pour choisir un manager et lui transmettre les détails du voyage (dates, destination, demande client).
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      onClick={() => setIsSendManagerModalOpen(true)}
+                      className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs gap-1.5"
+                    >
+                      <Send size={13} />
+                      <span>Envoyer ce devis à un Manager</span>
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
           </div>
 
           {/* ── Dialog Footer ─────────────────────────────────────── */}
@@ -2039,6 +2201,16 @@ Start the message directly with the greeting. End it with the closing phrase. No
                 </div>
 
                 <div className="flex items-center gap-2 justify-end">
+                  {prospect && (
+                    <Button 
+                      type="button" 
+                      onClick={() => setIsSendManagerModalOpen(true)}
+                      className="h-10 px-4 text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white gap-1.5 shadow-sm"
+                    >
+                      <Smartphone size={14} />
+                      <span>Envoyer au Manager</span>
+                    </Button>
+                  )}
                   <Button type="button" variant="outline" onClick={onClose} className="h-10 px-5 text-xs font-bold">
                     Annuler
                   </Button>
@@ -2249,6 +2421,48 @@ Start the message directly with the greeting. End it with the closing phrase. No
                 <X size={18} />
               </button>
               <img src={previewImage} alt="Preview" className="max-h-[85vh] rounded-lg shadow-2xl" />
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
+
+      {/* ── Modal d'Envoi au Manager (PocketApp) ── */}
+      <SendToManagerModal
+        isOpen={isSendManagerModalOpen}
+        onClose={() => setIsSendManagerModalOpen(false)}
+        devis={{
+          ...formData,
+          id: prospect?.id,
+          nom_prospect: clientSearch || formData.nom_prospect,
+          clients: clientsList.find(c => c.id === formData.client_id),
+          details_demande: formData.details_demande,
+          destination: destinationNom,
+          destination_emoji: destinationEmoji,
+          date_depart: dateDepart,
+          date_retour: dateRetour,
+          priorite: priorite,
+          agent_nom: assignedAgentNom || activeAgentName,
+          details_devis: prospect?.details_devis
+        }}
+        onSent={(updated) => {
+          if (updated?.manager_sent) setManagerSentData(updated.manager_sent);
+          if (onSave) onSave(updated);
+        }}
+      />
+
+      {/* ── Modal Aperçu Photo Réponse Manager ── */}
+      {previewManagerPhoto && (
+        <Dialog open={!!previewManagerPhoto} onOpenChange={() => setPreviewManagerPhoto(null)}>
+          <DialogContent className="max-w-3xl bg-transparent border-none shadow-none flex items-center justify-center [&>button]:hidden">
+            <div className="relative">
+              <button 
+                type="button" 
+                onClick={() => setPreviewManagerPhoto(null)} 
+                className="absolute -top-3 -right-3 bg-slate-900 text-white rounded-full p-1.5 shadow-lg border border-slate-700 hover:bg-slate-800"
+              >
+                <X size={18} />
+              </button>
+              <img src={previewManagerPhoto} alt="Aperçu Réponse Manager" className="max-h-[85vh] rounded-2xl shadow-2xl object-contain" />
             </div>
           </DialogContent>
         </Dialog>

@@ -26,8 +26,9 @@ import Profile from '@/pages/Profile';
 import WebsiteManagement from '@/pages/WebsiteManagement';
 import Telex from '@/pages/Telex';
 import OmraTracking from '@/pages/OmraTracking';
+import BadgeBuilder from '@/pages/BadgeBuilder';
 
-const RoleRoute = ({ children, allowedRoles = ['admin', 'agent'] }) => {
+const RoleRoute = ({ children, allowedRoles = ['admin', 'agent', 'manager'] }) => {
   const { session, role } = useAuth();
   
   if (!session) {
@@ -51,28 +52,30 @@ function App() {
           <Routes>
             <Route path="/login" element={<Login />} />
             
-            {/* Routes Opérationnelles (Admin & Agent) */}
-            <Route path="/" element={<RoleRoute allowedRoles={['admin', 'agent']}><Dashboard /></RoleRoute>} />
-            <Route path="/dashboard" element={<RoleRoute allowedRoles={['admin', 'agent']}><Dashboard /></RoleRoute>} />
-            <Route path="/ventes" element={<RoleRoute allowedRoles={['admin', 'agent']}><Ventes /></RoleRoute>} />
-            <Route path="/paiements" element={<RoleRoute allowedRoles={['admin', 'agent']}><Paiements /></RoleRoute>} />
-            <Route path="/pipeline" element={<RoleRoute allowedRoles={['admin', 'agent']}><Pipeline /></RoleRoute>} />
-            <Route path="/simulateur-devis" element={<RoleRoute allowedRoles={['admin', 'agent']}><SimulateurDevis /></RoleRoute>} />
-            <Route path="/profil" element={<RoleRoute allowedRoles={['admin', 'agent']}><Profile /></RoleRoute>} />
-            <Route path="/profile" element={<RoleRoute allowedRoles={['admin', 'agent']}><Profile /></RoleRoute>} />
-            <Route path="/omra" element={<RoleRoute allowedRoles={['admin', 'agent']}><Omra /></RoleRoute>} />
-            <Route path="/omra/pelerins" element={<RoleRoute allowedRoles={['admin', 'agent']}><Pelerins /></RoleRoute>} />
-            <Route path="/omra/group/:id" element={<RoleRoute allowedRoles={['admin', 'agent']}><OmraGroupDetails /></RoleRoute>} />
-            <Route path="/packages" element={<RoleRoute allowedRoles={['admin', 'agent']}><Packages /></RoleRoute>} />
-            <Route path="/clients" element={<RoleRoute allowedRoles={['admin', 'agent']}><Clients /></RoleRoute>} />
-            <Route path="/documents" element={<RoleRoute allowedRoles={['admin', 'agent']}><Documents /></RoleRoute>} />
-            <Route path="/telex" element={<RoleRoute allowedRoles={['admin', 'agent']}><Telex /></RoleRoute>} />
-            <Route path="/billets-telex" element={<RoleRoute allowedRoles={['admin', 'agent']}><Telex /></RoleRoute>} />
-            <Route path="/facturation" element={<RoleRoute allowedRoles={['admin', 'agent']}><Facturation /></RoleRoute>} />
-            <Route path="/visas" element={<RoleRoute allowedRoles={['admin', 'agent']}><Visas /></RoleRoute>} />
-            <Route path="/banque-contacts" element={<RoleRoute allowedRoles={['admin', 'agent']}><BanqueContacts /></RoleRoute>} />
-            <Route path="/marketing" element={<RoleRoute allowedRoles={['admin', 'agent']}><EmailMarketing /></RoleRoute>} />
-            <Route path="/website" element={<RoleRoute allowedRoles={['admin', 'agent']}><WebsiteManagement /></RoleRoute>} />
+            {/* Routes Opérationnelles (Admin, Agent & Manager) */}
+            <Route path="/" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Dashboard /></RoleRoute>} />
+            <Route path="/dashboard" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Dashboard /></RoleRoute>} />
+            <Route path="/ventes" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Ventes /></RoleRoute>} />
+            <Route path="/paiements" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Paiements /></RoleRoute>} />
+            <Route path="/pipeline" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Pipeline /></RoleRoute>} />
+            <Route path="/simulateur-devis" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><SimulateurDevis /></RoleRoute>} />
+            <Route path="/profil" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Profile /></RoleRoute>} />
+            <Route path="/profile" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Profile /></RoleRoute>} />
+            <Route path="/omra" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Omra /></RoleRoute>} />
+            <Route path="/omra/pelerins" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Pelerins /></RoleRoute>} />
+            <Route path="/omra/badges" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><BadgeBuilder /></RoleRoute>} />
+            <Route path="/badges" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><BadgeBuilder /></RoleRoute>} />
+            <Route path="/omra/group/:id" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><OmraGroupDetails /></RoleRoute>} />
+            <Route path="/packages" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Packages /></RoleRoute>} />
+            <Route path="/clients" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Clients /></RoleRoute>} />
+            <Route path="/documents" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Documents /></RoleRoute>} />
+            <Route path="/telex" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Telex /></RoleRoute>} />
+            <Route path="/billets-telex" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Telex /></RoleRoute>} />
+            <Route path="/facturation" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Facturation /></RoleRoute>} />
+            <Route path="/visas" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><Visas /></RoleRoute>} />
+            <Route path="/banque-contacts" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><BanqueContacts /></RoleRoute>} />
+            <Route path="/marketing" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><EmailMarketing /></RoleRoute>} />
+            <Route path="/website" element={<RoleRoute allowedRoles={['admin', 'agent', 'manager']}><WebsiteManagement /></RoleRoute>} />
             
             {/* Routes Administratives & Financières (Admin Uniquement) */}
             <Route path="/omra/tracking" element={<RoleRoute allowedRoles={['admin']}><OmraTracking /></RoleRoute>} />

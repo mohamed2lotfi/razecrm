@@ -17,6 +17,7 @@ import {
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import { cn } from '@/lib/utils';
+import XmlImportModal from '@/components/XmlImportModal';
 
 const CHAMBRE_KEYS = {
   'CH5': 'ch5', 'CH4': 'ch4', 'CH3': 'ch3', 'CH2': 'ch2', 'Single': 'single'
@@ -69,17 +70,25 @@ const Pelerins = () => {
   const [selectedPelerin, setSelectedPelerin] = useState(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [isSavingPelerin, setIsSavingPelerin] = useState(false);
+  const [isXmlImportModalOpen, setIsXmlImportModalOpen] = useState(false);
   const [pelerinFormData, setPelerinFormData] = useState({
     id: '',
     nom: '',
     prenom: '',
+    nom_arabe: '',
+    prenom_arabe: '',
     sexe: 'H',
     date_naissance: '',
+    lieu_naissance: '',
+    lieu_naissance_arabe: '',
     num_passeport: '',
+    date_emission_passeport: '',
     date_expiration_passeport: '',
     nationalite: 'Algérienne',
+    nin: '',
     telephone: '',
     photo_url: '',
+    passport_scan_url: '',
     num_visa: '',
     notes: ''
   });
@@ -217,6 +226,8 @@ const Pelerins = () => {
 
         list.push({
           id: `${enr.id}-${pIdx}`,
+          rawPelerin: pelerin,
+          rawPelerinId: pelerin.id || null,
           pelerin_id: masterProfile?.id || pelerin.pelerin_id || null,
           enrId: enr.id,
           groupeId: enr.groupe_id,
@@ -232,13 +243,20 @@ const Pelerins = () => {
           nom: rawNom,
           prenom: rawPrenom,
           fullName,
+          nom_arabe: masterProfile?.nom_arabe || pelerin.nom_arabe || '',
+          prenom_arabe: masterProfile?.prenom_arabe || pelerin.prenom_arabe || '',
+          nin: masterProfile?.nin || pelerin.nin || '',
+          lieu_naissance: masterProfile?.lieu_naissance || pelerin.lieu_naissance || '',
+          lieu_naissance_arabe: masterProfile?.lieu_naissance_arabe || pelerin.lieu_naissance_arabe || '',
           passport: masterProfile?.num_passeport || pelerin.num_passeport || pelerin.passport || '—',
-          dateExpirationPassport: masterProfile?.date_expiration_passeport || null,
-          dateNaissance: masterProfile?.date_naissance || null,
-          nationalite: masterProfile?.nationalite || 'Algérienne',
-          photoUrl: masterProfile?.photo_url || null,
-          numVisa: masterProfile?.num_visa || '',
-          notes: masterProfile?.notes || '',
+          dateEmissionPassport: masterProfile?.date_emission_passeport || pelerin.date_emission_passeport || null,
+          dateExpirationPassport: masterProfile?.date_expiration_passeport || pelerin.date_expiration_passeport || pelerin.dateExpirationPassport || null,
+          dateNaissance: masterProfile?.date_naissance || pelerin.date_naissance || pelerin.dateNaissance || null,
+          nationalite: masterProfile?.nationalite || pelerin.nationalite || 'Algérienne',
+          photoUrl: masterProfile?.photo_url || pelerin.photo_url || pelerin.photoUrl || null,
+          passportScanUrl: masterProfile?.passport_scan_url || pelerin.passport_scan_url || pelerin.passportScanUrl || null,
+          numVisa: masterProfile?.num_visa || pelerin.num_visa || '',
+          notes: masterProfile?.notes || pelerin.notes || '',
           sexe: masterProfile?.sexe || pelerin.sexe || 'H',
           isAdult,
           isChd: pelerin.chd && !pelerin.isEnfantSansLit,
@@ -257,8 +275,102 @@ const Pelerins = () => {
       });
     });
 
+    // Inclure également les pèlerins autonomes de la table 'pelerins' (créés via import XML ou hors groupe)
+    const registeredPassportSet = new Set(
+      list.map(p => p.passport && p.passport !== '—' ? p.passport.trim().toUpperCase() : null).filter(Boolean)
+    );
+    const registeredPelerinIdSet = new Set(
+      list.map(p => p.pelerin_id).filter(Boolean)
+    );
+
+    pelerinsTableData.forEach((p, pIdx) => {
+      const cleanPass = p.num_passeport ? p.num_passeport.trim().toUpperCase() : null;
+      if ((p.id && registeredPelerinIdSet.has(p.id)) || (cleanPass && registeredPassportSet.has(cleanPass))) {
+        return; // Déjà présent via un dossier de groupe
+      }
+
+      const rawNom = p.nom || 'Sans nom';
+      const rawPrenom = p.prenom || '';
+      const fullName = rawPrenom ? `${rawNom} ${rawPrenom}` : rawNom;
+
+      list.push({
+        id: p.id || `standalone-${pIdx}`,
+        pelerin_id: p.id,
+        enrId: null,
+        groupeId: null,
+        groupeNom: 'Fiche seule (Sans groupe)',
+        groupeDateDepart: '—',
+        groupeDateRetour: '—',
+        groupeCompagnie: '—',
+        hotelId: null,
+        hotelNom: '—',
+        chambreId: 'Non attribuée',
+        typeChambre: '—',
+        telephone: p.telephone || '—',
+        nom: rawNom,
+        prenom: rawPrenom,
+        fullName,
+        nom_arabe: p.nom_arabe || '',
+        prenom_arabe: p.prenom_arabe || '',
+        nin: p.nin || '',
+        lieu_naissance: p.lieu_naissance || '',
+        lieu_naissance_arabe: p.lieu_naissance_arabe || '',
+        passport: p.num_passeport || '—',
+        dateEmissionPassport: p.date_emission_passeport || null,
+        dateExpirationPassport: p.date_expiration_passeport || null,
+        dateNaissance: p.date_naissance || null,
+        nationalite: p.nationalite || 'Algérienne',
+        photoUrl: p.photo_url || null,
+        passportScanUrl: p.passport_scan_url || null,
+        numVisa: p.num_visa || '',
+        notes: p.notes || '',
+        sexe: p.sexe || 'H',
+        isAdult: true,
+        isChd: false,
+        isEnfantSansLit: false,
+        isGuide: false,
+        restauration: false,
+        tarifLit: 0,
+        tarifResto: 0,
+        reduction: 0,
+        commission: 0,
+        totalDu: 0,
+        totalPaye: 0,
+        reste: 0,
+        etat: 'fiche seule'
+      });
+    });
+
     return list;
   }, [enregistrements, groupes, paiements, hotels, pelerinsTableData]);
+
+  // Liste consolidée de tous les profils pèlerins (pour matching et liaison manuelle complète)
+  const consolidatedPelerins = useMemo(() => {
+    const map = new Map();
+
+    allPelerinsList.forEach(p => {
+      const key = p.pelerin_id || p.id;
+      if (key) map.set(key, p);
+    });
+
+    pelerinsTableData.forEach(p => {
+      if (!map.has(p.id)) {
+        map.set(p.id, {
+          ...p,
+          id: p.id,
+          pelerin_id: p.id,
+          fullName: p.prenom ? `${p.nom} ${p.prenom}` : p.nom,
+          passport: p.num_passeport || '—',
+          dateExpirationPassport: p.date_expiration_passeport || null,
+          dateEmissionPassport: p.date_emission_passeport || null,
+          dateNaissance: p.date_naissance || null,
+          groupeNom: 'Fiche pèlerin seule'
+        });
+      }
+    });
+
+    return Array.from(map.values());
+  }, [allPelerinsList, pelerinsTableData]);
 
   // Apply Search & Filters
   const filteredPelerins = useMemo(() => {
@@ -376,13 +488,20 @@ const Pelerins = () => {
       id: pelerin.pelerin_id || '',
       nom: pelerin.nom || '',
       prenom: pelerin.prenom || '',
+      nom_arabe: pelerin.nom_arabe || '',
+      prenom_arabe: pelerin.prenom_arabe || '',
       sexe: pelerin.sexe || 'H',
       date_naissance: pelerin.dateNaissance || '',
+      lieu_naissance: pelerin.lieu_naissance || '',
+      lieu_naissance_arabe: pelerin.lieu_naissance_arabe || '',
       num_passeport: pelerin.passport !== '—' ? pelerin.passport : '',
+      date_emission_passeport: pelerin.dateEmissionPassport || '',
       date_expiration_passeport: pelerin.dateExpirationPassport || '',
       nationalite: pelerin.nationalite || 'Algérienne',
+      nin: pelerin.nin || '',
       telephone: pelerin.telephone !== '—' ? pelerin.telephone : '',
       photo_url: pelerin.photoUrl || '',
+      passport_scan_url: pelerin.passportScanUrl || '',
       num_visa: pelerin.numVisa || '',
       notes: pelerin.notes || ''
     });
@@ -420,7 +539,7 @@ const Pelerins = () => {
     }
   };
 
-  // Save Fiche Pèlerin (Upsert into 'pelerins' table)
+  // Save Fiche Pèlerin (Sync into omra_enregistrements and optional pelerins table)
   const handleSavePelerin = async (e) => {
     e.preventDefault();
     if (!pelerinFormData.nom.trim()) {
@@ -436,34 +555,120 @@ const Pelerins = () => {
         id: pelerinId,
         nom: pelerinFormData.nom.trim(),
         prenom: pelerinFormData.prenom.trim() || null,
+        nom_arabe: pelerinFormData.nom_arabe.trim() || null,
+        prenom_arabe: pelerinFormData.prenom_arabe.trim() || null,
         sexe: pelerinFormData.sexe || 'H',
         date_naissance: pelerinFormData.date_naissance || null,
+        lieu_naissance: pelerinFormData.lieu_naissance.trim() || null,
+        lieu_naissance_arabe: pelerinFormData.lieu_naissance_arabe.trim() || null,
         num_passeport: pelerinFormData.num_passeport.trim() || null,
+        date_emission_passeport: pelerinFormData.date_emission_passeport || null,
         date_expiration_passeport: pelerinFormData.date_expiration_passeport || null,
         nationalite: pelerinFormData.nationalite || 'Algérienne',
+        nin: pelerinFormData.nin.trim() || null,
         telephone: pelerinFormData.telephone.trim() || null,
         photo_url: pelerinFormData.photo_url || null,
+        passport_scan_url: pelerinFormData.passport_scan_url || null,
         num_visa: pelerinFormData.num_visa.trim() || null,
         notes: pelerinFormData.notes.trim() || null,
         updated_at: new Date().toISOString()
       };
 
-      const { error } = await supabase.from('pelerins').upsert(payload, { onConflict: 'id' });
+      // 1. Si rattaché à un dossier groupe CRM (omra_enregistrements), mettre à jour directement le dossier
+      if (selectedPelerin?.enrId) {
+        let enr = enregistrements.find(e => String(e.id) === String(selectedPelerin.enrId));
+        if (!enr && selectedPelerin.enrId) {
+          const { data: dbEnr } = await supabase.from('omra_enregistrements').select('*').eq('id', selectedPelerin.enrId).maybeSingle();
+          if (dbEnr) enr = dbEnr;
+        }
 
-      if (error) {
-        alert("Erreur d'enregistrement: " + error.message);
-      } else {
-        // Update local pelerinsTableData state
-        setPelerinsTableData(prev => {
-          const exists = prev.some(p => p.id === pelerinId);
-          if (exists) {
-            return prev.map(p => p.id === pelerinId ? { ...p, ...payload } : p);
+        if (enr) {
+          let updatedPelerins = Array.isArray(enr.pelerins) ? [...enr.pelerins] : [];
+          let updatedEnfants = Array.isArray(enr.enfants_sans_lit) ? [...enr.enfants_sans_lit] : [];
+
+          const applyToObj = (target) => {
+            target.nom = payload.nom;
+            target.prenom = payload.prenom;
+            target.nom_arabe = payload.nom_arabe;
+            target.prenom_arabe = payload.prenom_arabe;
+            target.sexe = payload.sexe;
+            target.date_naissance = payload.date_naissance;
+            target.dateNaissance = payload.date_naissance;
+            target.lieu_naissance = payload.lieu_naissance;
+            target.lieu_naissance_arabe = payload.lieu_naissance_arabe;
+            target.nationalite = payload.nationalite;
+            target.num_passeport = payload.num_passeport;
+            target.passport = payload.num_passeport;
+            target.date_emission_passeport = payload.date_emission_passeport;
+            target.dateEmissionPassport = payload.date_emission_passeport;
+            target.date_expiration_passeport = payload.date_expiration_passeport;
+            target.dateExpirationPassport = payload.date_expiration_passeport;
+            target.nin = payload.nin;
+            target.telephone = payload.telephone;
+            target.photo_url = payload.photo_url;
+            target.photoUrl = payload.photo_url;
+            target.passport_scan_url = payload.passport_scan_url;
+            target.passportScanUrl = payload.passport_scan_url;
+            target.num_visa = payload.num_visa;
+            target.notes = payload.notes;
+          };
+
+          const isMatch = (item) => {
+            if (!item) return false;
+            if (selectedPelerin.pelerin_id && item.pelerin_id && String(selectedPelerin.pelerin_id) === String(item.pelerin_id)) return true;
+            if (selectedPelerin.rawPelerinId && item.id && String(selectedPelerin.rawPelerinId) === String(item.id)) return true;
+            if (selectedPelerin.id && item.id && (String(selectedPelerin.id) === String(item.id) || String(selectedPelerin.id).endsWith(String(item.id)))) return true;
+            const pPass = (selectedPelerin.passport || selectedPelerin.num_passeport || '').trim().toUpperCase();
+            const itemPass = (item.num_passeport || item.passport || '').trim().toUpperCase();
+            if (pPass && itemPass && pPass !== '—' && pPass === itemPass) return true;
+            return item.nom === selectedPelerin.nom;
+          };
+
+          if (selectedPelerin.isEnfantSansLit) {
+            const enf = updatedEnfants.find(isMatch);
+            if (enf) applyToObj(enf);
+          } else {
+            const pel = updatedPelerins.find(isMatch);
+            if (pel) applyToObj(pel);
           }
-          return [...prev, payload];
-        });
 
-        setIsModalOpen(false);
+          const { error: enrUpdateErr } = await supabase
+            .from('omra_enregistrements')
+            .update({
+              pelerins: updatedPelerins,
+              enfants_sans_lit: updatedEnfants
+            })
+            .eq('id', selectedPelerin.enrId);
+
+          if (enrUpdateErr) {
+            console.error("Erreur sync enregistrement:", enrUpdateErr);
+          }
+        }
       }
+
+      // 2. Synchronisation de la table pelerins si UUID valide ou pèlerin autonome
+      let targetPelerinUuid = isUuid ? pelerinId : null;
+      if (!targetPelerinUuid && !selectedPelerin?.enrId) {
+        const potentialId = selectedPelerin?.pelerin_id || selectedPelerin?.id;
+        if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(potentialId)) {
+          targetPelerinUuid = potentialId;
+        } else {
+          targetPelerinUuid = crypto.randomUUID();
+        }
+        payload.id = targetPelerinUuid;
+      }
+
+      if (targetPelerinUuid) {
+        try {
+          await supabase.from('pelerins').upsert(payload, { onConflict: 'id' });
+        } catch (tblErr) {
+          console.warn("Table pelerins sync note:", tblErr);
+        }
+      }
+
+      // Rafraîchir les données et fermer le modal
+      await fetchData();
+      setIsModalOpen(false);
     } catch (err) {
       console.error(err);
       alert("Erreur lors de l'enregistrement du pèlerin.");
@@ -475,33 +680,102 @@ const Pelerins = () => {
   // Delete Pelerin (Admin only)
   const handleDeletePelerin = async (p) => {
     if (!p) return;
-    const targetName = p.fullName || p.nom;
-    if (!window.confirm(`Êtes-vous sûr de vouloir supprimer définitivement le pèlerin "${targetName}" du groupe "${p.groupeNom}" ?`)) {
+    const targetName = p.fullName || p.nom || 'ce pèlerin';
+    const isStandalone = !p.enrId || p.groupeNom === 'Fiche seule (Sans groupe)' || p.groupeNom === 'Fiche pèlerin seule';
+
+    const confirmMsg = isStandalone
+      ? `Êtes-vous sûr de vouloir supprimer définitivement la fiche du pèlerin "${targetName}" ?`
+      : `Êtes-vous sûr de vouloir supprimer définitivement le pèlerin "${targetName}" du groupe "${p.groupeNom}" ?`;
+
+    if (!window.confirm(confirmMsg)) {
       return;
     }
 
     try {
       setLoading(true);
-      const enr = enregistrements.find(e => e.id === p.enrId);
+
+      // CAS 1: Pèlerin autonome (Fiche sans groupe enregistrée dans la table public.pelerins)
+      if (isStandalone) {
+        const targetId = p.pelerin_id || p.id;
+        const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(targetId);
+
+        let deleteQuery = supabase.from('pelerins').delete();
+        if (isUuid) {
+          deleteQuery = deleteQuery.eq('id', targetId);
+        } else if (p.passport && p.passport !== '—') {
+          deleteQuery = deleteQuery.eq('num_passeport', p.passport.trim().toUpperCase());
+        } else {
+          deleteQuery = deleteQuery.eq('id', targetId);
+        }
+
+        const { error: delErr } = await deleteQuery;
+        if (delErr) {
+          alert("Erreur lors de la suppression de la fiche pèlerin : " + delErr.message);
+        } else {
+          setIsModalOpen(false);
+          await fetchData();
+        }
+        return;
+      }
+
+      // CAS 2: Pèlerin lié à un dossier de groupe (omra_enregistrements)
+      let enr = enregistrements.find(e => String(e.id) === String(p.enrId));
+      if (!enr && p.enrId) {
+        // Fallback: chercher directement en base si pas encore présent dans le cache local
+        const { data: dbEnr } = await supabase.from('omra_enregistrements').select('*').eq('id', p.enrId).maybeSingle();
+        if (dbEnr) {
+          enr = dbEnr;
+        }
+      }
+
       if (!enr) {
-        alert("Dossier d'enregistrement introuvable.");
-        setLoading(false);
+        // Le dossier n'existe pas ou est orphelin
+        if (p.pelerin_id) {
+          if (window.confirm("Le dossier d'enregistrement associé est introuvable. Voulez-vous supprimer la fiche de ce pèlerin de la base de données ?")) {
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.pelerin_id);
+            if (isUuid) {
+              await supabase.from('pelerins').delete().eq('id', p.pelerin_id);
+            }
+            setIsModalOpen(false);
+            await fetchData();
+            return;
+          }
+        } else {
+          alert("Dossier d'enregistrement introuvable.");
+        }
         return;
       }
 
       let updatedPelerins = [...(enr.pelerins || [])];
       let updatedEnfants = [...(enr.enfants_sans_lit || [])];
 
+      const matchesTarget = (item) => {
+        if (!item) return false;
+        // 1. Matching par ID direct
+        if (p.pelerin_id && item.pelerin_id && String(p.pelerin_id) === String(item.pelerin_id)) return true;
+        if (p.rawPelerinId && item.id && String(p.rawPelerinId) === String(item.id)) return true;
+        if (p.id && item.id && (String(p.id) === String(item.id) || String(p.id).endsWith(String(item.id)))) return true;
+
+        // 2. Matching par Numéro de passeport
+        const pPass = (p.passport || p.num_passeport || '').trim().toUpperCase();
+        const itemPass = (item.num_passeport || item.passport || '').trim().toUpperCase();
+        if (pPass && itemPass && pPass !== '—' && pPass === itemPass) return true;
+
+        // 3. Matching par Nom / Prénom
+        const pNom = (p.nom || '').trim().toLowerCase();
+        const itemNom = (item.nom || '').trim().toLowerCase();
+        const pPrenom = (p.prenom || '').trim().toLowerCase();
+        const itemPrenom = (item.prenom || '').trim().toLowerCase();
+        if (pNom && itemNom && pNom === itemNom && (!pPrenom || !itemPrenom || pPrenom === itemPrenom)) return true;
+        if (pNom && itemNom && (pNom === `${itemNom} ${itemPrenom}`.trim() || `${pNom} ${pPrenom}`.trim() === itemNom)) return true;
+
+        return false;
+      };
+
       if (p.isEnfantSansLit) {
-        updatedEnfants = updatedEnfants.filter(enf => {
-          if (p.pelerin_id && enf.pelerin_id) return enf.pelerin_id !== p.pelerin_id;
-          return enf.nom?.trim().toLowerCase() !== p.nom?.trim().toLowerCase();
-        });
+        updatedEnfants = updatedEnfants.filter(enf => !matchesTarget(enf));
       } else {
-        updatedPelerins = updatedPelerins.filter(pel => {
-          if (p.pelerin_id && pel.pelerin_id) return pel.pelerin_id !== p.pelerin_id;
-          return pel.nom?.trim().toLowerCase() !== p.nom?.trim().toLowerCase();
-        });
+        updatedPelerins = updatedPelerins.filter(pel => !matchesTarget(pel));
       }
 
       if (updatedPelerins.length === 0 && updatedEnfants.length === 0) {
@@ -509,13 +783,15 @@ const Pelerins = () => {
           await supabase.from('omra_paiements').delete().eq('enregistrement_id', p.enrId);
           await supabase.from('omra_enregistrements').delete().eq('id', p.enrId);
           if (p.pelerin_id) {
-            await supabase.from('pelerins').delete().eq('id', p.pelerin_id).then();
+            const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.pelerin_id);
+            if (isUuid) {
+              await supabase.from('pelerins').delete().eq('id', p.pelerin_id).catch(() => {});
+            }
           }
           setIsModalOpen(false);
           await fetchData();
           return;
         } else {
-          setLoading(false);
           return;
         }
       }
@@ -532,7 +808,10 @@ const Pelerins = () => {
         alert("Erreur lors de la suppression : " + error.message);
       } else {
         if (p.pelerin_id) {
-          await supabase.from('pelerins').delete().eq('id', p.pelerin_id).then();
+          const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(p.pelerin_id);
+          if (isUuid) {
+            await supabase.from('pelerins').delete().eq('id', p.pelerin_id).catch(() => {});
+          }
         }
         setIsModalOpen(false);
         await fetchData();
@@ -905,6 +1184,14 @@ const Pelerins = () => {
             >
               <Printer size={14} />
               Imprimer / PDF
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setIsXmlImportModalOpen(true)}
+              className="h-9 gap-1.5 bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-sm"
+            >
+              <FileText size={14} />
+              Importer XML (XDS)
             </Button>
           </div>
         </div>
@@ -1440,24 +1727,49 @@ const Pelerins = () => {
                   </div>
 
                   <div className="flex-1 w-full space-y-3">
+                    {/* Nom & Prénom en Français */}
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                       <div>
-                        <Label className="text-xs font-bold text-slate-700">Nom de Famille *</Label>
+                        <Label className="text-xs font-bold text-slate-700">Nom de Famille (Latin) *</Label>
                         <Input
                           required
                           value={pelerinFormData.nom}
                           onChange={e => setPelerinFormData(p => ({ ...p, nom: e.target.value }))}
-                          placeholder="Nom"
+                          placeholder="Nom (ex: REDJDAL)"
                           className="h-9 text-xs mt-1"
                         />
                       </div>
                       <div>
-                        <Label className="text-xs font-bold text-slate-700">Prénom(s)</Label>
+                        <Label className="text-xs font-bold text-slate-700">Prénom(s) (Latin)</Label>
                         <Input
                           value={pelerinFormData.prenom}
                           onChange={e => setPelerinFormData(p => ({ ...p, prenom: e.target.value }))}
-                          placeholder="Prénom"
+                          placeholder="Prénom (ex: SABRINA)"
                           className="h-9 text-xs mt-1"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Nom & Prénom en Arabe (issu du XML / Sejil) */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      <div>
+                        <Label className="text-xs font-bold text-amber-800">اللقب (Nom en Arabe)</Label>
+                        <Input
+                          dir="rtl"
+                          value={pelerinFormData.nom_arabe}
+                          onChange={e => setPelerinFormData(p => ({ ...p, nom_arabe: e.target.value }))}
+                          placeholder="اللقب بالعربية"
+                          className="h-9 text-xs mt-1 font-arabic"
+                        />
+                      </div>
+                      <div>
+                        <Label className="text-xs font-bold text-amber-800">الاسم (Prénom en Arabe)</Label>
+                        <Input
+                          dir="rtl"
+                          value={pelerinFormData.prenom_arabe}
+                          onChange={e => setPelerinFormData(p => ({ ...p, prenom_arabe: e.target.value }))}
+                          placeholder="الاسم بالعربية"
+                          className="h-9 text-xs mt-1 font-arabic"
                         />
                       </div>
                     </div>
@@ -1503,12 +1815,22 @@ const Pelerins = () => {
                 {/* Passport & Dates Details */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <Label className="text-xs font-bold text-slate-700">N° de Passeport</Label>
+                    <Label className="text-xs font-bold text-slate-700">N° de Passeport *</Label>
                     <Input
                       value={pelerinFormData.num_passeport}
                       onChange={e => setPelerinFormData(p => ({ ...p, num_passeport: e.target.value }))}
-                      placeholder="Ex: 219874563"
-                      className="h-9 text-xs font-mono mt-1"
+                      placeholder="Ex: 305241861"
+                      className="h-9 text-xs font-mono font-bold mt-1 text-slate-900"
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="text-xs font-bold text-slate-700">Date de Délivrance</Label>
+                    <Input
+                      type="date"
+                      value={pelerinFormData.date_emission_passeport}
+                      onChange={e => setPelerinFormData(p => ({ ...p, date_emission_passeport: e.target.value }))}
+                      className="h-9 text-xs mt-1"
                     />
                   </div>
 
@@ -1521,7 +1843,10 @@ const Pelerins = () => {
                       className="h-9 text-xs mt-1"
                     />
                   </div>
+                </div>
 
+                {/* Naissance & Identification Nationale (NIN) */}
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <Label className="text-xs font-bold text-slate-700">Date de Naissance</Label>
                     <Input
@@ -1531,7 +1856,55 @@ const Pelerins = () => {
                       className="h-9 text-xs mt-1"
                     />
                   </div>
+
+                  <div>
+                    <Label className="text-xs font-bold text-slate-700">Lieu de Naissance</Label>
+                    <Input
+                      value={pelerinFormData.lieu_naissance}
+                      onChange={e => setPelerinFormData(p => ({ ...p, lieu_naissance: e.target.value }))}
+                      placeholder="Ex: LAKHDARIA"
+                      className="h-9 text-xs mt-1"
+                    />
+                  </div>
+
+                  <div>
+                    <Label className="text-xs font-bold text-slate-700">N° Identification Nationale (NIN)</Label>
+                    <Input
+                      value={pelerinFormData.nin}
+                      onChange={e => setPelerinFormData(p => ({ ...p, nin: e.target.value }))}
+                      placeholder="18 chiffres"
+                      className="h-9 text-xs font-mono mt-1"
+                    />
+                  </div>
                 </div>
+
+                {/* Scan du Passeport si disponible */}
+                {pelerinFormData.passport_scan_url && (
+                  <div className="p-3 rounded-xl bg-amber-50/50 border border-amber-200/80 flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-lg bg-amber-100 text-amber-700 flex items-center justify-center shrink-0">
+                        <FileText size={18} />
+                      </div>
+                      <div>
+                        <div className="text-xs font-bold text-slate-800">Scan du Passeport intégré</div>
+                        <div className="text-[11px] text-slate-500">Page officielle d'identité importée du XML</div>
+                      </div>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8 text-xs gap-1.5 bg-white hover:bg-slate-50 text-slate-700"
+                      onClick={() => {
+                        const win = window.open();
+                        win?.document.write(`<img src="${pelerinFormData.passport_scan_url}" style="max-width:100%; height:auto;" alt="Scan Passeport" />`);
+                      }}
+                    >
+                      <Eye size={13} />
+                      Voir le Scan
+                    </Button>
+                  </div>
+                )}
 
                 {/* Nationality & Visa */}
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1617,6 +1990,18 @@ const Pelerins = () => {
               </form>
             </div>
           </div>
+        )}
+
+        {/* ── Modal d'Importation XML XDS / Sejil / Nusuk ───────────── */}
+        {isXmlImportModalOpen && (
+          <XmlImportModal
+            isOpen={isXmlImportModalOpen}
+            onClose={() => setIsXmlImportModalOpen(false)}
+            existingPelerins={consolidatedPelerins}
+            onImportSuccess={() => {
+              fetchData();
+            }}
+          />
         )}
       </div>
     </Layout>
