@@ -29,6 +29,12 @@ import OmraGroupBadgesTab from '@/components/OmraGroupBadgesTab';
 import OmraGroupRoomSummary from '@/components/OmraGroupRoomSummary';
 import { buildChambresPhysiques, computeGroupRoomStats, getChambreCapacity } from '@/lib/omraRoomUtils';
 import { ReactSortable } from "react-sortablejs";
+import { 
+  calculateGroupDocumentsMetrics, 
+  calculatePilgrimProgress, 
+  getPilgrimChecklist 
+} from '@/lib/omraPelerinsChecklistConstants';
+import { getChecklistStats } from '@/lib/omraChecklistConstants';
 
 const CHAMBRE_CAPACITY = {
   'CH5': 5, 'CH4': 4, 'CH3': 3, 'CH2': 2, 'Single': 1
@@ -829,6 +835,26 @@ const OmraGroupDetails = () => {
       }));
     }
   }, [formData.intermediaire, formData.hotelId, selectedHotelConfig]);
+
+  // Statistiques calculées pour les deux checklists (Vol & Documents Pèlerins) - avant les returns conditionnels
+  const flightChecklistStats = useMemo(() => {
+    return getChecklistStats(groupe?.checklist, groupe?.date_depart);
+  }, [groupe?.checklist, groupe?.date_depart]);
+
+  const documentsGroupMetrics = useMemo(() => {
+    const list = [];
+    (enregistrements || []).forEach(enr => {
+      const occs = [...(enr.pelerins || []), ...(enr.enfantsSansLit || enr.enfants_sans_lit || [])];
+      occs.forEach(o => {
+        if (o && o.nom && o.nom.trim()) {
+          const docs = getPilgrimChecklist(o);
+          const progress = calculatePilgrimProgress(docs);
+          list.push({ docs, progress });
+        }
+      });
+    });
+    return calculateGroupDocumentsMetrics(list);
+  }, [enregistrements]);
 
   if (loading) {
     return (
@@ -2477,8 +2503,20 @@ const OmraGroupDetails = () => {
     { id: 'paiements', label: 'Historique Paiements', icon: CreditCard },
     { id: 'commissions', label: 'Commissions', icon: User },
     { id: 'finance', label: 'Bilan Financier', icon: Wallet },
-    { id: 'checklist', label: 'Checklist Vol', icon: CheckSquare },
-    { id: 'checklist_pelerins', label: 'Checklist Documents', icon: ClipboardCheck },
+    { 
+      id: 'checklist', 
+      label: 'Checklist Vol', 
+      icon: CheckSquare,
+      badge: `${flightChecklistStats.percent}%`,
+      badgeType: 'vol'
+    },
+    { 
+      id: 'checklist_pelerins', 
+      label: 'Checklist Documents', 
+      icon: ClipboardCheck,
+      badge: `${documentsGroupMetrics.globalPercentage}%`,
+      badgeType: 'docs'
+    },
     { id: 'badges', label: 'Badges Pèlerins', icon: IdCard },
   ];
 
@@ -2629,7 +2667,23 @@ const OmraGroupDetails = () => {
                 )}
               >
                 <Icon size={16} />
-                {tab.label}
+                <span>{tab.label}</span>
+                {tab.badge && (
+                  <span className={cn(
+                    "ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold border shadow-2xs transition-colors",
+                    tab.badgeType === 'docs' 
+                      ? (documentsGroupMetrics.globalPercentage === 100 
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-300" 
+                          : documentsGroupMetrics.globalPercentage > 0 
+                            ? "bg-blue-100 text-blue-800 border-blue-300" 
+                            : "bg-slate-100 text-slate-600 border-slate-200")
+                      : (flightChecklistStats.percent === 100 
+                          ? "bg-emerald-100 text-emerald-800 border-emerald-300" 
+                          : "bg-amber-100 text-amber-800 border-amber-300")
+                  )}>
+                    {tab.badge}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -2893,13 +2947,10 @@ const OmraGroupDetails = () => {
                                           <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded">Guide</span>
                                         )}
                                         {(() => {
-                                          const rawDocs = m.rawPelerin?.checklist_docs || m.rawPelerin?.checklistDocs || {};
-                                          let count = 0;
-                                          if (rawDocs.visa || (m.rawPelerin?.num_visa && String(m.rawPelerin?.num_visa).trim())) count++;
-                                          if (rawDocs.billet || m.rawPelerin?.numero_billet || m.rawPelerin?.num_billet) count++;
-                                          if (rawDocs.badge) count++;
-                                          if (rawDocs.contrat) count++;
-                                          const pct = Math.round((count / 4) * 100);
+                                          const docs = getPilgrimChecklist(m.rawPelerin);
+                                          const prog = calculatePilgrimProgress(docs);
+                                          const count = prog.completedCount;
+                                          const pct = prog.percentage;
                                           return (
                                             <button
                                               type="button"

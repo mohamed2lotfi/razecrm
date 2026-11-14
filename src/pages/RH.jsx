@@ -258,7 +258,7 @@ const RH = () => {
 
   return (
     <Layout>
-      <div className="flex flex-col gap-6 max-w-7xl mx-auto w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
+      <div className="flex flex-col gap-6 w-full animate-in fade-in slide-in-from-bottom-4 duration-500">
         
         {/* En-tête Premium avec gradient subtil */}
         <div className="relative overflow-hidden bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-8 shadow-xl shadow-indigo-900/10">

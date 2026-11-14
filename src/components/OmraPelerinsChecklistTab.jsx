@@ -23,6 +23,40 @@ import {
   calculateGroupDocumentsMetrics,
   generatePelerinsChecklistPrintHtml
 } from '@/lib/omraPelerinsChecklistConstants';
+import { getChecklistStats } from '@/lib/omraChecklistConstants';
+
+// Helper pour retrouver un occupant de façon robuste (par id, passeport, nom ou index)
+const findOccupantIndex = (array, pilgrim) => {
+  if (!Array.isArray(array)) return -1;
+  if (pilgrim.rawPelerin?.pelerin_id) {
+    const idx = array.findIndex(p => p.pelerin_id === pilgrim.rawPelerin.pelerin_id);
+    if (idx !== -1) return idx;
+  }
+  if (pilgrim.passport && pilgrim.passport !== '—') {
+    const idx = array.findIndex(p => {
+      const pass = (p.num_passeport || p.passport || '').trim().toUpperCase();
+      return pass && pass === pilgrim.passport;
+    });
+    if (idx !== -1) return idx;
+  }
+  if (pilgrim.nom) {
+    const pNom = (pilgrim.nom || '').trim().toLowerCase();
+    const pPrenom = (pilgrim.prenom || '').trim().toLowerCase();
+    const idx = array.findIndex(p => {
+      const nom = (p.nom || '').trim().toLowerCase();
+      const prenom = (p.prenom || '').trim().toLowerCase();
+      if (pNom && nom === pNom) {
+        if (!pPrenom || !prenom || prenom === pPrenom) return true;
+      }
+      return false;
+    });
+    if (idx !== -1) return idx;
+  }
+  if (pilgrim.originalIndex !== undefined && array[pilgrim.originalIndex]) {
+    return pilgrim.originalIndex;
+  }
+  return -1;
+};
 
 export default function OmraPelerinsChecklistTab({
   groupe,
@@ -41,6 +75,11 @@ export default function OmraPelerinsChecklistTab({
   const [selectedKeys, setSelectedKeys] = useState(new Set());
   const [savingKey, setSavingKey] = useState(null);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState('');
+
+  // Statistiques de la checklist de vol (opérations groupe)
+  const flightStats = useMemo(() => {
+    return getChecklistStats(groupe?.checklist, groupe?.date_depart);
+  }, [groupe?.checklist, groupe?.date_depart]);
 
   // Note dialog state
   const [isNoteDialogOpen, setIsNoteDialogOpen] = useState(false);
@@ -62,8 +101,11 @@ export default function OmraPelerinsChecklistTab({
       ];
 
       occupants.forEach(occ => {
-        globalIndex++;
         const occNom = (occ.nom || '').trim();
+        // Ignorer les créneaux vides non assignés
+        if (!occNom) return;
+
+        globalIndex++;
         const occPrenom = (occ.prenom || '').trim();
         const occPass = (occ.num_passeport || occ.passport || '').trim().toUpperCase();
 
@@ -83,7 +125,9 @@ export default function OmraPelerinsChecklistTab({
           ? `${prenomArabe} ${nomArabe}`.trim() 
           : (occPrenom ? `${occNom} ${occPrenom}` : occNom);
 
-        const fullNameFr = occPrenom ? `${occNom} ${occPrenom}` : occNom;
+        const fullNameFr = occPrenom && !occNom.toLowerCase().includes(occPrenom.toLowerCase()) 
+          ? `${occNom} ${occPrenom}` 
+          : occNom;
         const passport = occPass || master?.num_passeport || '—';
         const photo = (typeof getPelerinPhoto === 'function' ? getPelerinPhoto(occ) : null) || master?.photo_url || null;
         const sexe = master?.sexe || occ.sexe || 'H';
@@ -94,12 +138,22 @@ export default function OmraPelerinsChecklistTab({
         const hotelObj = hotels.find(h => h.id === enr.hotelId || h.id === enr.hotel_id);
         const chambreTitle = enr.chambreId || enr.chambre_id ? `Ch. ${enr.chambreId || enr.chambre_id}` : 'Non assignée';
 
-        const docs = getPilgrimChecklist(occ);
+        // Fusion des données de documents pèlerin + master pour une vue 100% réelle
+        const mergedForDocs = {
+          ...master,
+          ...occ,
+          num_visa: occ.num_visa || master?.num_visa || '',
+          numero_billet: occ.numero_billet || occ.num_billet || master?.numero_billet || master?.num_billet || '',
+          checklist_docs: occ.checklist_docs || occ.checklistDocs || master?.checklist_docs || master?.checklistDocs || null
+        };
+
+        const docs = getPilgrimChecklist(mergedForDocs);
         const progress = calculatePilgrimProgress(docs);
 
         list.push({
           uniqueKey,
           enrId: enr.id,
+          masterId: master?.id || null,
           isEnfantSansLit: occ.isEnfantSansLit,
           originalIndex: occ.originalIndex,
           nom: occNom,
@@ -128,7 +182,7 @@ export default function OmraPelerinsChecklistTab({
     return list;
   }, [enregistrements, hotels, pelerinsMaster, getPelerinPhoto]);
 
-  // 2. Métriques globales calculées
+  // 2. Métriques globales calculées (indicateurs et progression réels)
   const metrics = useMemo(() => {
     return calculateGroupDocumentsMetrics(allPilgrims);
   }, [allPilgrims]);
@@ -193,9 +247,10 @@ export default function OmraPelerinsChecklistTab({
       ? [...(targetEnr.enfantsSansLit || targetEnr.enfants_sans_lit || [])]
       : [...(targetEnr.pelerins || [])];
 
-    if (targetArray[pilgrim.originalIndex]) {
-      targetArray[pilgrim.originalIndex] = {
-        ...targetArray[pilgrim.originalIndex],
+    const targetIdx = findOccupantIndex(targetArray, pilgrim);
+    if (targetIdx >= 0 && targetArray[targetIdx]) {
+      targetArray[targetIdx] = {
+        ...targetArray[targetIdx],
         checklist_docs: updatedDocs
       };
     }
@@ -231,9 +286,10 @@ export default function OmraPelerinsChecklistTab({
         setTimeout(() => setSaveSuccessMsg(''), 2000);
       }
 
-      // Sync facultatif avec table pelerins si pelerin_id est défini
-      const pId = pilgrim.rawPelerin?.pelerin_id || pilgrim.rawPelerin?.id;
-      if (pId) {
+      // Sync facultatif avec table pelerins si UUID valide
+      const pId = pilgrim.masterId || pilgrim.rawPelerin?.pelerin_id || pilgrim.rawPelerin?.id;
+      const isUuid = pId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(pId);
+      if (isUuid) {
         supabase
           .from('pelerins')
           .update({ checklist_docs: updatedDocs })
@@ -287,9 +343,10 @@ export default function OmraPelerinsChecklistTab({
       if (!enrData) return;
 
       const targetList = p.isEnfantSansLit ? enrData.enfants : enrData.pelerins;
-      const targetObj = targetList[p.originalIndex];
+      const targetIdx = findOccupantIndex(targetList, p);
 
-      if (targetObj) {
+      if (targetIdx >= 0 && targetList[targetIdx]) {
+        const targetObj = targetList[targetIdx];
         const currentDocs = getPilgrimChecklist(targetObj);
         let newDocs = { ...currentDocs, updated_at: new Date().toISOString() };
 
@@ -307,7 +364,7 @@ export default function OmraPelerinsChecklistTab({
           newDocs[actionType] = true;
         }
 
-        targetList[p.originalIndex] = {
+        targetList[targetIdx] = {
           ...targetObj,
           checklist_docs: newDocs
         };
@@ -418,15 +475,28 @@ export default function OmraPelerinsChecklistTab({
         <div className="flex items-center gap-2">
           <button
             onClick={onSwitchToFlightChecklist}
-            className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-slate-200"
+            className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-slate-200 cursor-pointer"
           >
             <Plane size={14} className="text-emerald-600" />
             Checklist Vol (Opérations Groupe)
+            <span className={cn(
+              "ml-1.5 px-2 py-0.5 rounded-full text-[10px] font-extrabold border",
+              flightStats.percent === 100 
+                ? "bg-emerald-100 text-emerald-800 border-emerald-300" 
+                : "bg-slate-100 text-slate-700 border-slate-200"
+            )}>
+              {flightStats.percent}%
+            </span>
           </button>
           <div className="px-3.5 py-2 rounded-lg text-xs font-bold bg-primary/10 text-primary border border-primary/20 flex items-center gap-1.5 shadow-xs">
             <Users size={14} />
             Checklist Documents (Suivi Muatamirs)
-            <span className="ml-1.5 px-2 py-0.5 rounded-full bg-primary text-white text-[10px] font-extrabold">
+            <span className={cn(
+              "ml-1.5 px-2 py-0.5 rounded-full text-white text-[10px] font-extrabold shadow-2xs",
+              metrics.globalPercentage === 100 ? "bg-emerald-600" :
+              metrics.globalPercentage >= 50 ? "bg-blue-600" :
+              metrics.globalPercentage > 0 ? "bg-amber-600" : "bg-slate-500"
+            )}>
               {metrics.globalPercentage}%
             </span>
           </div>

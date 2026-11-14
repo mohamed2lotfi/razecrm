@@ -69,15 +69,72 @@ export const DEFAULT_PILGRIM_CHECKLIST = {
 export const getPilgrimChecklist = (pelerinObj) => {
   if (!pelerinObj) return { ...DEFAULT_PILGRIM_CHECKLIST };
 
-  const raw = pelerinObj.checklist_docs || pelerinObj.checklistDocs || pelerinObj.documents_checklist || {};
+  // Si l'objet contient déjà les docs normalisés
+  if (pelerinObj.docs && typeof pelerinObj.docs === 'object' && pelerinObj.docs.visa !== undefined) {
+    return {
+      visa: Boolean(pelerinObj.docs.visa),
+      billet: Boolean(pelerinObj.docs.billet),
+      badge: Boolean(pelerinObj.docs.badge),
+      contrat: Boolean(pelerinObj.docs.contrat),
+      remarque: pelerinObj.docs.remarque || pelerinObj.remarque || '',
+      updated_at: pelerinObj.docs.updated_at || null
+    };
+  }
+
+  // Si l'objet est lui-même un dictionnaire de docs ({ visa, billet, badge, contrat })
+  if (pelerinObj.visa !== undefined && pelerinObj.billet !== undefined && pelerinObj.badge !== undefined && pelerinObj.contrat !== undefined) {
+    return {
+      visa: Boolean(pelerinObj.visa),
+      billet: Boolean(pelerinObj.billet),
+      badge: Boolean(pelerinObj.badge),
+      contrat: Boolean(pelerinObj.contrat),
+      remarque: pelerinObj.remarque || '',
+      updated_at: pelerinObj.updated_at || null
+    };
+  }
+
+  const raw = pelerinObj.checklist_docs || 
+              pelerinObj.checklistDocs || 
+              pelerinObj.documents_checklist || 
+              pelerinObj.rawPelerin?.checklist_docs || 
+              pelerinObj.rawPelerin?.checklistDocs || 
+              {};
+
+  const hasExplicitUpdate = Boolean(raw.updated_at);
+  const numVisa = pelerinObj.num_visa || pelerinObj.numVisa || pelerinObj.rawPelerin?.num_visa || '';
+  const numBillet = pelerinObj.numero_billet || pelerinObj.num_billet || pelerinObj.numBillet || pelerinObj.rawPelerin?.numero_billet || pelerinObj.rawPelerin?.num_billet || '';
+
+  const hasVisaNumber = Boolean(numVisa && String(numVisa).trim().length > 0);
+  const hasBilletNumber = Boolean(numBillet && String(numBillet).trim().length > 0);
+
+  // Visa : si explicitement mis à jour dans la checklist, respecter raw.visa; sinon fallback sur la présence du N° de visa
+  let visa = false;
+  if (raw.visa !== undefined) {
+    visa = hasExplicitUpdate ? Boolean(raw.visa) : (Boolean(raw.visa) || hasVisaNumber);
+  } else {
+    visa = hasVisaNumber;
+  }
+
+  // Billet : si explicitement mis à jour, respecter raw.billet; sinon fallback sur la présence du N° de billet
+  let billet = false;
+  if (raw.billet !== undefined) {
+    billet = hasExplicitUpdate ? Boolean(raw.billet) : (Boolean(raw.billet) || hasBilletNumber);
+  } else {
+    billet = hasBilletNumber;
+  }
+
+  const badge = Boolean(raw.badge ?? false);
+  const contrat = Boolean(raw.contrat ?? false);
+  const remarque = raw.remarque || pelerinObj.notes || pelerinObj.rawPelerin?.notes || '';
+  const updated_at = raw.updated_at || null;
 
   return {
-    visa: Boolean(raw.visa ?? (pelerinObj.num_visa && String(pelerinObj.num_visa).trim().length > 0 ? true : false)),
-    billet: Boolean(raw.billet ?? (pelerinObj.numero_billet || pelerinObj.num_billet ? true : false)),
-    badge: Boolean(raw.badge ?? false),
-    contrat: Boolean(raw.contrat ?? false),
-    remarque: raw.remarque || pelerinObj.notes || '',
-    updated_at: raw.updated_at || null
+    visa,
+    billet,
+    badge,
+    contrat,
+    remarque,
+    updated_at
   };
 };
 
@@ -85,6 +142,10 @@ export const getPilgrimChecklist = (pelerinObj) => {
  * Calcule la progression (0 à 100%) d'un pèlerin sur ses 4 documents
  */
 export const calculatePilgrimProgress = (pelerinObjOrDocs) => {
+  if (pelerinObjOrDocs?.progress && typeof pelerinObjOrDocs.progress === 'object') {
+    return pelerinObjOrDocs.progress;
+  }
+
   const docs = pelerinObjOrDocs?.visa !== undefined ? pelerinObjOrDocs : getPilgrimChecklist(pelerinObjOrDocs);
   
   let completedCount = 0;
@@ -148,8 +209,9 @@ export const calculateGroupDocumentsMetrics = (pilgrimsList = []) => {
   };
 
   pilgrimsList.forEach(p => {
-    const docs = getPilgrimChecklist(p);
-    const prog = calculatePilgrimProgress(docs);
+    // Récupérer les docs soit depuis p.docs, soit depuis p (si docs normalisés), soit via getPilgrimChecklist
+    const docs = p?.docs || (p?.visa !== undefined && p?.billet !== undefined ? p : getPilgrimChecklist(p));
+    const prog = p?.progress || calculatePilgrimProgress(docs);
 
     if (docs.visa) counts.visa++;
     if (docs.billet) counts.billet++;
@@ -164,7 +226,7 @@ export const calculateGroupDocumentsMetrics = (pilgrimsList = []) => {
   });
 
   const totalExpectedDocs = totalPilgrims * 4;
-  const globalPercentage = Math.round((totalValidatedDocs / totalExpectedDocs) * 100);
+  const globalPercentage = totalExpectedDocs > 0 ? Math.round((totalValidatedDocs / totalExpectedDocs) * 100) : 0;
 
   return {
     totalPilgrims,

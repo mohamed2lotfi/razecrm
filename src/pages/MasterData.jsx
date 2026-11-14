@@ -65,7 +65,7 @@ const AgencySettings = () => {
   if (loading) return <div className="flex justify-center h-48"><Loader2 className="animate-spin text-primary m-auto" size={32} /></div>;
 
   return (
-    <Card className="max-w-3xl">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Informations de l'Agence (En-tête PDF)</CardTitle>
       </CardHeader>
@@ -147,7 +147,7 @@ const AirlinesSettings = () => {
   if (loading) return <div className="flex justify-center h-48"><Loader2 className="animate-spin text-primary m-auto" size={32} /></div>;
 
   return (
-    <Card className="max-w-3xl">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Catalogue des Compagnies Aériennes (Billeterie)</CardTitle>
       </CardHeader>
@@ -230,7 +230,7 @@ const ContactTypesSettings = () => {
   if (loading) return <div className="flex justify-center h-48"><Loader2 className="animate-spin text-primary m-auto" size={32} /></div>;
 
   return (
-    <Card className="max-w-xl">
+    <Card className="w-full">
       <CardHeader>
         <CardTitle>Types de Contacts</CardTitle>
       </CardHeader>
@@ -1046,7 +1046,7 @@ const AISettings = () => {
   }
 
   return (
-    <div className="max-w-2xl">
+    <div className="w-full">
       <Card>
         <CardHeader>
           <CardTitle className="text-lg flex items-center gap-2">
@@ -1244,7 +1244,7 @@ const EnveloppesSettings = () => {
   if (loading) return <div className="flex justify-center h-24 items-center"><Loader2 className="animate-spin text-primary" size={24} /></div>;
 
   return (
-    <div className="space-y-6 max-w-4xl">
+    <div className="space-y-6 w-full">
       <Card>
         <CardHeader><CardTitle>Enveloppes Principales & Types</CardTitle></CardHeader>
         <CardContent>
@@ -1634,7 +1634,7 @@ const VisaCatalogueSettings = () => {
   if (loading) return <div className="flex justify-center h-24 items-center"><Loader2 className="animate-spin text-primary" size={24} /></div>;
 
   return (
-    <div className="space-y-4 max-w-6xl">
+    <div className="space-y-4 w-full">
       <div className="bg-white rounded-xl border shadow-sm overflow-hidden">
         <div className="p-4 border-b bg-slate-50 flex items-center justify-between">
           <h2 className="font-bold text-slate-700 flex items-center gap-2">
@@ -2021,7 +2021,7 @@ const UsersSettings = () => {
 
   return (
     <div className="space-y-6">
-      <Card className="max-w-4xl">
+      <Card className="w-full">
         <CardHeader className="flex flex-row items-center justify-between pb-4 border-b">
           <div>
             <CardTitle className="text-xl font-bold flex items-center gap-2">
@@ -2344,7 +2344,7 @@ const DestinationsSettings = () => {
   );
 
   return (
-    <div className="space-y-6 max-w-5xl">
+    <div className="space-y-6 w-full">
       <Card>
         <CardHeader className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4">
           <div>
