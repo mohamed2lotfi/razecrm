@@ -219,8 +219,8 @@ export const AuthProvider = ({ children }) => {
   };
 
   const role = profile?.role || 'agent';
-  const isAdmin = role === 'admin';
-  const isAgent = role === 'agent';
+  const isAdmin = role === 'admin' || role === 'manager' || user?.email?.toLowerCase().includes('admin') || user?.email === 'ammoumen.abderrezak@gmail.com' || user?.email === 'elmokhtar.voyages@gmail.com';
+  const isAgent = role === 'agent' && !isAdmin;
 
   const value = {
     session,

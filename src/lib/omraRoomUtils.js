@@ -101,25 +101,31 @@ export const buildChambresPhysiques = (enregistrements = [], roomCapacityOverrid
   (enregistrements || []).forEach(enr => {
     const hotelId = enr.hotelId || enr.hotel_id;
     const typeChambre = enr.typeChambre || enr.type_chambre || 'CH4';
-    const baseRoomId = enr.chambreId || enr.chambre_id || enr.id;
+    const explicitRoomId = (enr.chambreId || enr.chambre_id || '').trim();
 
-    if (baseRoomId && !chambresPhysiques[baseRoomId]) {
-      chambresPhysiques[baseRoomId] = {
-        chambreId: baseRoomId,
-        hotelId,
-        typeChambre,
-        occupants: [],
-        enregistrements: [enr]
-      };
-    } else if (baseRoomId && chambresPhysiques[baseRoomId]) {
-      if (!chambresPhysiques[baseRoomId].enregistrements.find(e => (e.id || e.id) === enr.id)) {
-        chambresPhysiques[baseRoomId].enregistrements.push(enr);
+    // Enregistrer la chambre si un numéro/identifiant explicite est défini
+    if (explicitRoomId) {
+      if (!chambresPhysiques[explicitRoomId]) {
+        chambresPhysiques[explicitRoomId] = {
+          chambreId: explicitRoomId,
+          hotelId,
+          typeChambre,
+          occupants: [],
+          enregistrements: [enr]
+        };
+      } else {
+        if (!chambresPhysiques[explicitRoomId].enregistrements.find(e => (e.id || e.id) === enr.id)) {
+          chambresPhysiques[explicitRoomId].enregistrements.push(enr);
+        }
       }
     }
 
+    const fallbackRoomId = explicitRoomId || enr.id;
+
     const pelerins = enr.pelerins || [];
     pelerins.forEach((p, idx) => {
-      const cId = p.chambreId || baseRoomId;
+      const cId = (p.chambreId || fallbackRoomId || '').trim();
+      if (!cId) return;
       if (!chambresPhysiques[cId]) {
         chambresPhysiques[cId] = {
           chambreId: cId,
@@ -142,7 +148,8 @@ export const buildChambresPhysiques = (enregistrements = [], roomCapacityOverrid
 
     const enfants = enr.enfantsSansLit || enr.enfants_sans_lit || [];
     enfants.forEach((enf, idx) => {
-      const cId = enf.chambreId || baseRoomId;
+      const cId = (enf.chambreId || fallbackRoomId || '').trim();
+      if (!cId) return;
       if (!chambresPhysiques[cId]) {
         chambresPhysiques[cId] = {
           chambreId: cId,
@@ -164,7 +171,19 @@ export const buildChambresPhysiques = (enregistrements = [], roomCapacityOverrid
     });
   });
 
-  return Object.values(chambresPhysiques).map(chambre => {
+  return Object.values(chambresPhysiques)
+    .filter(chambre => {
+      // Les chambres avec occupants sont toujours conservées
+      if ((chambre.occupants || []).length > 0) return true;
+      // Pour les chambres vides: ne pas créer de chambre fantôme si son ID est juste le UUID d'un enregistrement sans chambre_id
+      const isEnrFallback = (enregistrements || []).some(e => 
+        String(e.id || '').trim() === String(chambre.chambreId || '').trim() && 
+        !e.chambreId && !e.chambre_id
+      );
+      if (isEnrFallback) return false;
+      return true;
+    })
+    .map(chambre => {
     const defaultCapacity = getChambreCapacity(chambre.typeChambre);
     const capacity = roomCapacityOverrides[chambre.chambreId] ?? defaultCapacity;
     const occupantsForBed = (chambre.occupants || []).filter(o => !o.isEnfantSansLit);

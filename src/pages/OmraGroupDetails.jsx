@@ -7,7 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogBody, DialogFooter } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
@@ -19,11 +19,12 @@ import {
   Printer, Edit2, Upload, File, ChevronDown, CheckCircle,
   AlertCircle, RefreshCw, DollarSign, Search, ChevronLeft, ChevronRight,
   FolderOpen, Camera, UserCheck, X, Check, Split, CheckSquare, Square, CheckCircle2,
-  IdCard
+  IdCard, ClipboardCheck
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import ClientForm from '@/components/ClientForm';
 import OmraGroupChecklistTab from '@/components/OmraGroupChecklistTab';
+import OmraPelerinsChecklistTab from '@/components/OmraPelerinsChecklistTab';
 import OmraGroupBadgesTab from '@/components/OmraGroupBadgesTab';
 import OmraGroupRoomSummary from '@/components/OmraGroupRoomSummary';
 import { buildChambresPhysiques, computeGroupRoomStats, getChambreCapacity } from '@/lib/omraRoomUtils';
@@ -245,12 +246,12 @@ const OmraGroupDetails = () => {
   const groupePaiements = paiements;
   const groupePaiementsCommissions = paiementsCommissions;
 
-  const [activeTab, setActiveTab] = useState(urlTab || 'enregistrements'); // enregistrements | vueliste | chambres | paiements | commissions | finance | checklist | badges
+  const [activeTab, setActiveTab] = useState(urlTab || 'enregistrements'); // enregistrements | vueliste | chambres | paiements | commissions | finance | checklist | checklist_pelerins | badges
   const [activeListHotelId, setActiveListHotelId] = useState('');
   const [pelerinsMaster, setPelerinsMaster] = useState([]);
 
   useEffect(() => {
-    if (urlTab && ['enregistrements', 'vueliste', 'chambres', 'paiements', 'commissions', 'finance', 'checklist', 'badges'].includes(urlTab)) {
+    if (urlTab && ['enregistrements', 'vueliste', 'chambres', 'paiements', 'commissions', 'finance', 'checklist', 'checklist_pelerins', 'badges'].includes(urlTab)) {
       setActiveTab(urlTab);
     }
   }, [urlTab]);
@@ -530,6 +531,7 @@ const OmraGroupDetails = () => {
 
   // --- Room Capacity Overrides (visual only, no DB impact) ---
   const [roomCapacityOverrides, setRoomCapacityOverrides] = useState({});
+  const [deletedRoomIds, setDeletedRoomIds] = useState(() => new Set());
   const [editingCapacityRoomId, setEditingCapacityRoomId] = useState(null);
   const [newCapacityValue, setNewCapacityValue] = useState('');
 
@@ -976,7 +978,8 @@ const OmraGroupDetails = () => {
   const margeNette = caSansCommission - grandTotalReduction - grandTotalDepenses;
 
   // --- Chambres Virtuelles & Lits Vides Aggregation ---
-  const listeChambresPhysiques = buildChambresPhysiques(groupeEnregistrements, roomCapacityOverrides);
+  const rawChambresPhysiques = buildChambresPhysiques(groupeEnregistrements, roomCapacityOverrides);
+  const listeChambresPhysiques = rawChambresPhysiques.filter(c => !deletedRoomIds.has(String(c.chambreId || '').trim()));
   const groupRoomStats = computeGroupRoomStats(listeChambresPhysiques, groupe?.hotels, hotels);
 
   // --- Commissions Aggregation ---
@@ -1039,6 +1042,13 @@ const OmraGroupDetails = () => {
       updatedPelerins[occupantIdx] = { ...updatedPelerins[occupantIdx], chambreId: toChambreId };
       localPayload.pelerins = updatedPelerins;
       dbPayload.pelerins = updatedPelerins;
+
+      // Si tous les pèlerins sont dans la même chambre cible, aligner chambre_id de l'enregistrement
+      if (updatedPelerins.every(p => (p.chambreId || toChambreId) === toChambreId)) {
+        localPayload.chambreId = toChambreId;
+        localPayload.chambre_id = toChambreId;
+        dbPayload.chambre_id = toChambreId;
+      }
     }
 
     // Update local state immediately
@@ -1887,6 +1897,128 @@ const OmraGroupDetails = () => {
     setEditingRoomId(null);
   };
 
+  // --- Admin Room Deletion Handler (Chambres Vides) ---
+  const handleDeleteRoom = async (chambre) => {
+    if (!isAdmin) {
+      alert("Action réservée aux administrateurs.");
+      return;
+    }
+    if (!chambre) return;
+
+    const occupants = chambre.occupants || [];
+    if (occupants.length > 0) {
+      alert("Seules les chambres vides peuvent être supprimées depuis cette vue.");
+      return;
+    }
+
+    const targetRoomStr = String(chambre.chambreId || '').trim();
+    const isNonAttrib = chambre.isNonAttribuee || targetRoomStr === String(chambre.enregistrements?.[0]?.id || '').trim();
+    const roomName = isNonAttrib ? 'non attribuée' : `N°${targetRoomStr}`;
+
+    const confirmMsg = `Êtes-vous sûr de vouloir supprimer définitivement la chambre vide ${roomName} ?`;
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
+    try {
+      const directEnrIds = (chambre.enregistrements || []).map(e => e.id).filter(Boolean);
+      
+      const allRelatedEnrs = enregistrements.filter(e => {
+        const eIdStr = String(e.id || '').trim();
+        const eChambreStr = String(e.chambreId || e.chambre_id || '').trim();
+        return directEnrIds.includes(e.id) || (targetRoomStr && (eChambreStr === targetRoomStr || eIdStr === targetRoomStr));
+      });
+
+      const enrIdsToDelete = [];
+      const enrsToUpdate = [];
+
+      for (const enr of allRelatedEnrs) {
+        const pelerins = enr.pelerins || [];
+        const enfants = enr.enfantsSansLit || enr.enfants_sans_lit || [];
+
+        if (pelerins.length === 0 && enfants.length === 0) {
+          // Dossier vide sans aucun pèlerin -> suppression complète
+          enrIdsToDelete.push(enr.id);
+        } else {
+          // Dossier dont les pèlerins sont dans d'autres chambres: dissocier
+          const fallbackRoom = pelerins.find(p => p.chambreId && String(p.chambreId).trim() !== targetRoomStr)?.chambreId || null;
+          enrsToUpdate.push({
+            id: enr.id,
+            chambreId: fallbackRoom,
+            dbPayload: {
+              chambre_id: fallbackRoom
+            }
+          });
+        }
+      }
+
+      // 1. Suppressions dans Supabase
+      if (enrIdsToDelete.length > 0) {
+        await supabase.from('omra_paiements').delete().in('enregistrement_id', enrIdsToDelete);
+        const { error: delErr } = await supabase.from('omra_enregistrements').delete().in('id', enrIdsToDelete);
+        if (delErr) {
+          console.error("Erreur suppression enregistrements:", delErr);
+        }
+      }
+
+      // 2. Mises à jour des dossiers rattachés à d'autres chambres
+      for (const item of enrsToUpdate) {
+        const { error: upErr } = await supabase.from('omra_enregistrements').update(item.dbPayload).eq('id', item.id);
+        if (upErr) {
+          console.warn("Erreur mise à jour dossier:", upErr);
+        }
+      }
+
+      // 3. Détacher toute référence restante à targetRoomStr dans omra_enregistrements
+      if (targetRoomStr) {
+        await supabase.from('omra_enregistrements')
+          .update({ chambre_id: null })
+          .eq('chambre_id', targetRoomStr)
+          .eq('groupe_id', id);
+      }
+
+      // 4. Mettre à jour le state React immédiatement
+      setEnregistrements(prev => {
+        let updated = prev.filter(e => !enrIdsToDelete.includes(e.id));
+        enrsToUpdate.forEach(u => {
+          const idx = updated.findIndex(e => e.id === u.id);
+          if (idx !== -1) {
+            updated[idx] = {
+              ...updated[idx],
+              chambreId: u.chambreId,
+              chambre_id: u.chambreId,
+              ...u.dbPayload
+            };
+          }
+        });
+        return updated;
+      });
+
+      if (enrIdsToDelete.length > 0) {
+        setPaiements(prev => prev.filter(p => !enrIdsToDelete.includes(p.enregistrementId)));
+      }
+
+      // 5. Nettoyer les overrides de capacité
+      if (roomCapacityOverrides[chambre.chambreId] !== undefined || (targetRoomStr && roomCapacityOverrides[targetRoomStr] !== undefined)) {
+        setRoomCapacityOverrides(prev => {
+          const next = { ...prev };
+          delete next[chambre.chambreId];
+          if (targetRoomStr) delete next[targetRoomStr];
+          return next;
+        });
+      }
+
+      // 6. Marquer la chambre comme supprimée
+      setDeletedRoomIds(prev => new Set([...prev, targetRoomStr, String(chambre.chambreId || '').trim()]));
+
+      if (editingRoomId === chambre.chambreId) setEditingRoomId(null);
+      if (editingCapacityRoomId === chambre.chambreId) setEditingCapacityRoomId(null);
+
+    } catch (err) {
+      alert("Une erreur est survenue lors de la suppression : " + (err.message || err));
+    }
+  };
+
   const typesChambresDisponibles = Object.keys(CHAMBRE_CAPACITY).filter(k => {
     if (!selectedHotelConfig) return false;
     const prix = Number(selectedHotelConfig[CHAMBRE_KEYS[k]]);
@@ -2346,6 +2478,7 @@ const OmraGroupDetails = () => {
     { id: 'commissions', label: 'Commissions', icon: User },
     { id: 'finance', label: 'Bilan Financier', icon: Wallet },
     { id: 'checklist', label: 'Checklist Vol', icon: CheckSquare },
+    { id: 'checklist_pelerins', label: 'Checklist Documents', icon: ClipboardCheck },
     { id: 'badges', label: 'Badges Pèlerins', icon: IdCard },
   ];
 
@@ -2759,6 +2892,33 @@ const OmraGroupDetails = () => {
                                         {m.guide && (
                                           <span className="px-1.5 py-0.5 bg-blue-100 text-blue-800 text-[10px] font-bold rounded">Guide</span>
                                         )}
+                                        {(() => {
+                                          const rawDocs = m.rawPelerin?.checklist_docs || m.rawPelerin?.checklistDocs || {};
+                                          let count = 0;
+                                          if (rawDocs.visa || (m.rawPelerin?.num_visa && String(m.rawPelerin?.num_visa).trim())) count++;
+                                          if (rawDocs.billet || m.rawPelerin?.numero_billet || m.rawPelerin?.num_billet) count++;
+                                          if (rawDocs.badge) count++;
+                                          if (rawDocs.contrat) count++;
+                                          const pct = Math.round((count / 4) * 100);
+                                          return (
+                                            <button
+                                              type="button"
+                                              onClick={() => setActiveTab('checklist_pelerins')}
+                                              title={`Documents : ${count}/4 (${pct}%) - Cliquez pour ouvrir le suivi`}
+                                              className={cn(
+                                                "px-1.5 py-0.5 rounded text-[9px] font-extrabold cursor-pointer transition-colors inline-flex items-center gap-1",
+                                                pct === 100 
+                                                  ? "bg-emerald-100 text-emerald-800 border border-emerald-300 hover:bg-emerald-200" 
+                                                  : pct > 0 
+                                                    ? "bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100" 
+                                                    : "bg-slate-100 text-slate-500 border border-slate-200 hover:bg-slate-200"
+                                              )}
+                                            >
+                                              <ClipboardCheck size={10} />
+                                              <span>Docs {pct}%</span>
+                                            </button>
+                                          );
+                                        })()}
                                       </div>
                                     </div>
                                   );
@@ -2863,8 +3023,9 @@ const OmraGroupDetails = () => {
               }
 
               const totalChambres = chambresHotel.length;
-              const totalPages = Math.ceil(totalChambres / CHAMBRES_PER_PAGE);
-              const currentChambres = chambresHotel.slice((currentChambrePage - 1) * CHAMBRES_PER_PAGE, currentChambrePage * CHAMBRES_PER_PAGE);
+              const totalPages = Math.max(1, Math.ceil(totalChambres / CHAMBRES_PER_PAGE));
+              const safeChambrePage = Math.min(currentChambrePage, totalPages);
+              const currentChambres = chambresHotel.slice((safeChambrePage - 1) * CHAMBRES_PER_PAGE, safeChambrePage * CHAMBRES_PER_PAGE);
 
               return (
                 <div>
@@ -3023,6 +3184,19 @@ const OmraGroupDetails = () => {
                                    {occupantsForCapacity.length}/{capacity}
                                  </button>
                                )}
+                               {isAdmin && (chambre.occupants || []).length === 0 && (
+                                  <button 
+                                    type="button"
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleDeleteRoom({ ...chambre, isNonAttribuee });
+                                    }}
+                                    title="Supprimer cette chambre vide"
+                                    className="w-6 h-6 flex items-center justify-center rounded text-red-500 hover:text-red-700 hover:bg-red-50 border border-transparent hover:border-red-200 transition-colors ml-1 shrink-0 cursor-pointer"
+                                  >
+                                    <Trash2 size={13} />
+                                  </button>
+                                )}
                              </div>
                           </div>
 
@@ -3503,9 +3677,26 @@ const OmraGroupDetails = () => {
         {activeTab === 'checklist' && (
           <OmraGroupChecklistTab 
             groupe={groupe} 
+            enregistrements={enregistrements}
             onUpdateGroup={handleUpdateGroup} 
             agencySettings={agencySettings} 
             isAdmin={isAdmin} 
+            onSwitchToPelerinsChecklist={() => setActiveTab('checklist_pelerins')}
+          />
+        )}
+
+        {/* ── Tab Content: Checklist Documents Pèlerins (Visa, Billet, Badge, Contrat) ── */}
+        {activeTab === 'checklist_pelerins' && (
+          <OmraPelerinsChecklistTab 
+            groupe={groupe} 
+            enregistrements={enregistrements} 
+            onUpdateEnregistrements={setEnregistrements}
+            hotels={hotels} 
+            pelerinsMaster={pelerinsMaster} 
+            getPelerinPhoto={getPelerinPhoto} 
+            isAdmin={isAdmin} 
+            agencySettings={agencySettings} 
+            onSwitchToFlightChecklist={() => setActiveTab('checklist')}
           />
         )}
 

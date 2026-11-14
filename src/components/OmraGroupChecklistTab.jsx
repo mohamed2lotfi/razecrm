@@ -24,7 +24,14 @@ import {
   getChecklistStats 
 } from '@/lib/omraChecklistConstants';
 
-const OmraGroupChecklistTab = ({ groupe, onUpdateGroup, agencySettings, isAdmin }) => {
+const OmraGroupChecklistTab = ({ 
+  groupe, 
+  onUpdateGroup, 
+  agencySettings, 
+  isAdmin,
+  onSwitchToPelerinsChecklist,
+  enregistrements = []
+}) => {
   const [checklist, setChecklist] = useState([]);
   const [filterStatus, setFilterStatus] = useState('all'); // 'all' | 'pas_encore' | 'en_cours' | 'ok' | 'retard'
   const [searchQuery, setSearchQuery] = useState('');
@@ -557,6 +564,29 @@ const OmraGroupChecklistTab = ({ groupe, onUpdateGroup, agencySettings, isAdmin 
 
   return (
     <div className="space-y-6">
+      {/* ── Switcher Checklist Vol / Checklist Documents Pèlerins ── */}
+      {onSwitchToPelerinsChecklist && (
+        <div className="flex items-center justify-between gap-3 bg-white p-3 rounded-xl border shadow-xs">
+          <div className="flex items-center gap-2">
+            <div className="px-3.5 py-2 rounded-lg text-xs font-bold bg-primary/10 text-primary border border-primary/20 flex items-center gap-1.5 shadow-xs">
+              <Plane size={14} className="text-emerald-600" />
+              Checklist Vol (Opérations Groupe)
+              <span className="ml-1.5 px-2 py-0.5 rounded-full bg-primary text-white text-[10px] font-extrabold">
+                {stats.percent}%
+              </span>
+            </div>
+            <button
+              type="button"
+              onClick={onSwitchToPelerinsChecklist}
+              className="flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-semibold text-slate-600 hover:text-slate-900 hover:bg-slate-100 transition-colors border border-slate-200 cursor-pointer"
+            >
+              <Users size={14} className="text-emerald-600" />
+              Checklist Documents (Suivi Muatamirs : Visa, Billet, Badge, Contrat)
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* ── Bandeau Récapitulatif & KPIs ────────────────────────── */}
       <Card className="border-0 shadow-md ring-1 ring-black/5 bg-gradient-to-br from-card to-muted/30 overflow-hidden">
         <CardContent className="p-6">

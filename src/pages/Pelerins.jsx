@@ -257,6 +257,7 @@ const Pelerins = () => {
           passportScanUrl: masterProfile?.passport_scan_url || pelerin.passport_scan_url || pelerin.passportScanUrl || null,
           numVisa: masterProfile?.num_visa || pelerin.num_visa || '',
           notes: masterProfile?.notes || pelerin.notes || '',
+          checklistDocs: pelerin.checklist_docs || pelerin.checklistDocs || masterProfile?.checklist_docs || {},
           sexe: masterProfile?.sexe || pelerin.sexe || 'H',
           isAdult,
           isChd: pelerin.chd && !pelerin.isEnfantSansLit,
@@ -1490,6 +1491,30 @@ const Pelerins = () => {
                                 {p.isGuide && (
                                   <span className="px-1.5 py-0.2 rounded bg-blue-100 text-blue-800 text-[9px] font-bold uppercase">Guide</span>
                                 )}
+                                {(() => {
+                                  const cDocs = p.checklistDocs || {};
+                                  let docCount = 0;
+                                  if (cDocs.visa || p.numVisa) docCount++;
+                                  if (cDocs.billet) docCount++;
+                                  if (cDocs.badge) docCount++;
+                                  if (cDocs.contrat) docCount++;
+                                  const pct = Math.round((docCount / 4) * 100);
+                                  return (
+                                    <span 
+                                      title={`Documents : ${docCount}/4 (${pct}%)`}
+                                      className={cn(
+                                        "px-1.5 py-0.2 rounded text-[9px] font-extrabold inline-flex items-center gap-0.5",
+                                        pct === 100 
+                                          ? "bg-emerald-100 text-emerald-800 border border-emerald-300" 
+                                          : pct > 0 
+                                            ? "bg-blue-50 text-blue-700 border border-blue-200" 
+                                            : "bg-slate-100 text-slate-500 border border-slate-200"
+                                      )}
+                                    >
+                                      Docs {pct}%
+                                    </span>
+                                  );
+                                })()}
                               </div>
                             </div>
                           </div>
